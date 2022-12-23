@@ -1,1 +1,0 @@
-Pruning proposal repository
