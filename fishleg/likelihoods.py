@@ -24,7 +24,7 @@ class GaussianLikelihood():
         sigma=theta
         if self.sigma_fixed:
             sigma = self.sigma_init
-        return 0.5* torch.nn.MSELoss(y, y_pred) / sigma + np.log(sigma**2)/y_pred.shape[0]
+        return 0.5* (torch.nn.MSELoss(y, y_pred) / sigma + np.log(sigma**2)/y_pred.shape[0])
 
     def sample(self,theta,y_pred):
         """
