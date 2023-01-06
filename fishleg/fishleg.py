@@ -74,6 +74,8 @@ class FishLeg(Optimizer):
         self.aux_betas = aux_betas
         self.aux_eps = aux_eps
         self.step_t = 0
+        self.z = copy.deepcopy(model) # will host eps*Qg in the aux update
+        self.tmp = copy.deepcopy(model) # will host theta ± z in the aux update 
         
 
     def __init_model_aux(self, model):
@@ -91,36 +93,91 @@ class FishLeg(Optimizer):
 
 
     def update_aux(self):
-        self.aux_opt.zero_grad()
-        for p in self.plus_model.parameters():
-            p.requires_grad_(False)
-        for p in self.minus_model.parameters():
-            p.requires_grad_(False)
+        # if z = eps*Qg, then
+        # the auxiliary loss is equal to nll(theta+z) + nll(theta-z) - 2*sum(z*g)
+        # we're going to compute the gradient w.r.t. z of each of these 3 terms separately
+        # they will be summed as we go along
 
-        aux_loss = 0.
+        self.aux_opt.zero_grad()
+        
+        data = self.model.sample(self.aux_K)
+
+        # first, compute z once and for all
+
         for group in self.param_groups:
             name = group['name']
             Qv = group['Qv']
             aux_params = group['aux_params']
             order = group['order']
             aux_scale_init = group['aux_scale_init']
-
+            z = self.z._modules[name]
             grad = []
             for p in group['params']:
                 grad.append(p.grad.data)
             
-            qg = aux_scale_init * Qv(aux_params, grad)
-            for g, d_p, para_name in zip(grad, qg, order):
-                self.plus_model._modules[name]._parameters[para_name].data.add_(d_p, alpha=self.eps)
-                self.minus_model._modules[name]._parameters[para_name].data.add_(d_p, alpha=-self.eps)
-                aux_loss -= 2*torch.sum(g*d_p)
-        
-        data = self.model.sample(self.aux_K)
-        h_plus = self.plus_model.nll(data)
-        h_minus = self.minus_model.nll(data)
-        aux_loss += (h_plus + h_minus)/(self.eps**2)
+            qg = (self.eps * aux_scale_init) * Qv(aux_params, grad)
+            for gi, qgi, para_name, thetai in zip(grad, qg, order, group['params']):
+                zi = z._parameters[para_name]
+                torch._copy_from(input=qgi.data, dst=zi.data)
 
-        aux_loss.backward()
+        # next compute dNLL(theta+z)/dz in tmp.grad, initially set to zero
+        for group in self.param_groups:
+            name = group['name']
+            order = group['order']
+            z = self.z._modules[name]
+            tmp = self.tmp._modules[name]
+            for para_name, thetai in zip(order, group['params']):
+                zi = z._parameters[para_name]
+                tmpi = tmp._parameters[para_name]
+                tmpi.zero_grad()
+                torch._copy_from(input=thetai.data, dst=tmpi.data) 
+                tmpi.add_(zi) # tmp = theta + z at this point
+
+        h = self.tmp.nll(data)
+        h.backward()
+
+        # next add dNLL(theta-z)/dz to tmp.grad
+        for group in self.param_groups:
+            name = group['name']
+            order = group['order']
+            z = self.z._modules[name]
+            tmp = self.tmp._modules[name]
+            for para_name, thetai in zip(order, group['params']):
+                zi = z._parameters[para_name]
+                tmpi = tmp._parameters[para_name]
+                torch._copy_from(input=thetai.data, dst=tmpi.data) 
+                tmpi.add_(zi, alpha=-1.) # tmp = theta - z at this point
+
+        h = -self.tmp.nll(data)
+        h.backward()
+
+        # add d(-2*dot(g,z))/dz to tmp.grad
+        third_term = 0
+        for group in self.param_groups:
+            name = group['name']
+            order = group['order']
+            z = self.z._modules[name]
+            tmp = self.tmp._modules[name]
+            for para_name, gi in zip(order, grad):
+                zi = z._parameters[para_name]
+                tmpi = tmp._parameters[para_name]
+                torch._copy_from(input=zi.data, dst=tmpi.data)
+                third_term += -2*sum(tmpi*gi)
+
+        third_term.backward()
+
+        # finally, backprop towards the aux parameters
+        for group in self.param_groups:
+            name = group['name']
+            order = group['order']
+            z = self.z._modules[name]
+            for para_name in order:
+                zi = z._parameters[para_name]
+                tmpi = tmp._parameters[para_name]
+                tmpi.grad.mul_(1/self.eps**2)
+                zi.backward(tmpi.grad)
+
+        # now aux_opt has the right gradient
         self.aux_opt.step()
 
         
