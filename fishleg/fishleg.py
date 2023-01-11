@@ -3,7 +3,9 @@ import torch.nn as nn
 import copy
 from torch.optim import Optimizer, Adam
 from torch.nn import ParameterDict, Parameter
+from utils import recursive_setattr, recursive_getattr
 
+        
 
 class fishLinear(nn.Linear):
     def __init__(self, in_features: int, out_features: int, bias: bool = True,
@@ -38,17 +40,24 @@ def update_dict(replace, module):
 class FishLeg(Optimizer):
     def __init__(self, model, lr=1e-2, eps=1e-4, aux_K=5, update_aux_every=1, aux_scale_init=1, aux_lr=1e-3, aux_betas=(0.9, 0.999), aux_eps=1e-8):
         self.model = model
+        #print(self.model)
         self.aux_model = self.__init_model_aux(model)
         self.plus_model = copy.deepcopy(self.model)
         self.minus_model = copy.deepcopy(self.model)
+        #print(self.model)
+        #print(self.aux_model)
+        #print(self.plus_model)
+        #print(self.minus_model)
+        #s()
 
         # partition by modules
         self.aux_param = [param for name,param in self.aux_model.named_parameters() if "fishleg_aux" in name]
 
         param_groups = []
-        for module_name, module in self.aux_model.named_modules():
+        for (module_name, module) in self.aux_model.named_modules():
             if hasattr(module, "fishleg_aux"):
-                params = {name:param for name, param in self.model._modules[module_name].named_parameters() 
+                model_module = recursive_getattr(self.model,module_name)
+                params = {name:param for name, param in model_module.named_parameters() 
                             if 'fishleg_aux' not in name}
                 g = {
                     'params': [params[name] for name in module.order],
@@ -59,6 +68,7 @@ class FishLeg(Optimizer):
                     'name': module_name
                 }
                 param_groups.append(g)
+                print("has attr")
         #TODO: add param_group for modules without aux
         defaults = dict(lr=lr, 
                         aux_scale_init=aux_scale_init)
@@ -85,7 +95,7 @@ class FishLeg(Optimizer):
                     module.bias is not None
                 )
                 replace = update_dict(replace, module)
-                aux_model._modules[name] = replace
+                recursive_setattr(aux_model, name, replace)
         return aux_model
 
 

@@ -4,7 +4,22 @@ import math
 import os
 import json
 
+def recursive_setattr(obj, attr, value):
+    print(obj)
+    attr = attr.split('.', 1)
+    
+    if len(attr) == 1:
+        setattr(obj, attr[0], value)
+    else:
+        recursive_setattr(getattr(obj, attr[0]), attr[1], value)
 
+def recursive_getattr(obj, attr):
+    attr = attr.split('.', 1)
+   
+    if len(attr) == 1:
+        return getattr(obj, attr[0])
+    else:
+        return recursive_getattr(getattr(obj, attr[0]), attr[1])       
 def dense_to_one_hot(labels_dense, num_classes=None):
     """Convert class labels from scalars to one-hot vectors.
     labeld_dense is a list of labels 

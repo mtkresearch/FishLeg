@@ -51,6 +51,8 @@ if __name__ == '__main__':
         opt.zero_grad()
         pred_y = model(x)
         loss = nn.MSELoss()(y,pred_y)
+        print(loss)
+        s()
         loss.backward()
         opt.step()
         if iteration % 10 ==0:
