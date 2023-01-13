@@ -1,7 +1,5 @@
 import torch
 import numpy as np
-import math
-import os
 import json
 
 
@@ -12,7 +10,6 @@ def validateJSon(json_data):
         return True
     except ValueError:
         return False
-    return True
 
 
 def MSE_accuracy(predictions, labels):

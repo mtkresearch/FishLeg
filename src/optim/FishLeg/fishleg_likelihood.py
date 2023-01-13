@@ -2,11 +2,15 @@ import torch
 import numpy as np
 
 #####
-# Add an abstract syntax class here for users to be able to create their own custom likelihoods.
+# TODO: Add an abstract syntax class here for users to be able to create their own custom likelihoods.
+class FishLikelihood:
+    pass
+
+
 #####
 
 # Note, need to check that the recuction of the nll is correct, default reducation is mean
-class GaussianLikelihood:
+class GaussianLikelihood(FishLikelihood):
     def __init__(self, sigma_init, sigma_fixed):
         self.sigma_init = sigma_init
         self.sigma_fixed = sigma_fixed
@@ -49,7 +53,7 @@ class GaussianLikelihood:
         return 0.5 * ((lam * u) ** 2)
 
 
-class BernoulliLikelihood:
+class BernoulliLikelihood(FishLikelihood):
     def __init__(self):
         pass
 
@@ -68,7 +72,7 @@ class BernoulliLikelihood:
         return 1.0 * torch.bernoulli(pred_dist)
 
 
-class SoftMaxLikelihood:
+class SoftMaxLikelihood(FishLikelihood):
     def __init__(self):
         pass
 

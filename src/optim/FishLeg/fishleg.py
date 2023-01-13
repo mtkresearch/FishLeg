@@ -3,7 +3,7 @@ import torch.nn as nn
 import copy
 from torch.optim import Optimizer, Adam
 
-from .fishleg_layers import FISH_LAYERS, FishLinear
+from .fishleg_layers import FISH_LAYERS
 
 
 class FishLeg(Optimizer):
@@ -78,12 +78,18 @@ class FishLeg(Optimizer):
 
     def __init_model_aux(self, model):
         for name, module in model.named_modules():
-            if isinstance(module, nn.Linear):
-                replace = FishLinear(
+            try:
+                replace = FISH_LAYERS[type(module).__name__.lower()](
                     module.in_features, module.out_features, module.bias is not None
                 )
                 replace = self.update_dict(replace, module)
                 model._modules[name] = replace
+            except KeyError:
+                pass
+
+        # TODO: The above may not be a very "correct" way to do this, so please feel free to change, for example, we may want to check the name is in the fish_layer keys before attempting what is in the try statement.
+        # TODO: Error checking to check that model includes some auxiliary arguments.
+
         return model
 
     def update_aux(self):

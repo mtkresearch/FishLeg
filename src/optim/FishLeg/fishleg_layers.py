@@ -28,6 +28,7 @@ class FishLinear(nn.Linear):
         super(FishLinear, self).__init__(
             in_features, out_features, bias, device=device, dtype=dtype
         )
+        self._layer_name = "Linear"
         self.fishleg_aux = ParameterDict(
             {
                 "scale": Parameter(torch.ones(size=(1,))),
@@ -36,6 +37,10 @@ class FishLinear(nn.Linear):
             }
         )
         self.order = ["weight", "bias"]
+
+    @property
+    def name(self):
+        return self._layer_name
 
     @staticmethod
     def Qv(aux: dict, v: list):
@@ -51,4 +56,6 @@ class FishLinear(nn.Linear):
         R.to(device)
 
 
-FISH_LAYERS = {"linear": FishLinear}
+FISH_LAYERS = {
+    "linear": FishLinear
+}  # Perhaps this would be better constructed inside the __init__.py file?
