@@ -1,3 +1,4 @@
+from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import copy
@@ -7,18 +8,37 @@ from .fishleg_layers import FISH_LAYERS
 
 
 class FishLeg(Optimizer):
+    """Implement FishLeg algorithm.
+    Args:
+        model (nn.Module): a pytorch neural network module, 
+                can be nested in a tree structure
+        lr (float, optional): learning rate for the parameters of the input model, 
+                using FishLeg (default: 1e-2)
+        eps (float, optional): a small scalar to evaluate the auxiliary loss 
+                in the direction of gradient of model parameters (default: 1e-4)
+        aux_K (int, optional): number of sample to evaluate the entropy (default: 5)
+        update_aux_every (int, optional): number of iteration after which an auxiliary 
+                update is executed, if negative, then run -update_aux_every auxiliary 
+                updates in each outer iteration. (default: -3)
+        aux_lr (float, optional): learning rate for the auxiliary parameters, 
+                using Adam (default: 1e-3)
+        aux_betas (Tuple[float, float], optional) coefficients used for computing
+                running averages of gradient and its square for auxiliary parameters
+                (default: (0.9, 0.999))
+        aux_eps (float, optional): term added to the denominator to improve
+                numerical stability for auxiliary parameters (default: 1e-8)
+    """
     def __init__(
         self,
-        model,
-        lr=1e-2,
-        eps=1e-4,
-        aux_K=5,
-        update_aux_every=-3,
-        aux_scale_init=1,
-        aux_lr=1e-3,
-        aux_betas=(0.9, 0.999),
-        aux_eps=1e-8,
-    ):
+        model: nn.Module,
+        lr: float = 1e-2,
+        eps: float = 1e-4,
+        aux_K: int = 5,
+        update_aux_every: int = -3,
+        aux_lr: float = 1e-3,
+        aux_betas: Tuple[float, float] = (0.9, 0.999),
+        aux_eps: float = 1e-8
+    ) -> None:
         self.model = model
         self.plus_model = copy.deepcopy(self.model)
         self.minus_model = copy.deepcopy(self.model)
@@ -60,27 +80,25 @@ class FishLeg(Optimizer):
         self.aux_opt = Adam(self.aux_param, lr=aux_lr, betas=aux_betas, eps=aux_eps)
         self.eps = eps
         self.aux_K = aux_K
-        self.update_aux_every = update_aux_every  # if negative, then run -update_aux_every aux updates in each outer iteration
-        self.aux_scale_init = aux_scale_init
+        self.update_aux_every = update_aux_every 
         self.aux_lr = aux_lr
         self.aux_betas = aux_betas
         self.aux_eps = aux_eps
         self.step_t = 0
 
-    def update_dict(self, replace, module):
-        replace_dict = replace.state_dict()
-        pretrained_dict = {
-            k: v for k, v in module.state_dict().items() if k in replace_dict
-        }
-        replace_dict.update(pretrained_dict)
-        replace.load_state_dict(replace_dict)
-        return replace
+    def __init_model_aux(self, model: nn.Module) -> nn.Module:
+        """Given a model to optimize, parameters can be devided to
+        1. those fixed as pre-trained, and 
+        2. those required to optimize using FishLeg
 
-    def __init_model_aux(self, model):
+        Replace modules in the second group with Fishleg modules.
+        """
         for name, module in model.named_modules():
             try:
                 replace = FISH_LAYERS[type(module).__name__.lower()](
-                    module.in_features, module.out_features, module.bias is not None
+                    module.in_features, 
+                    module.out_features, 
+                    module.bias is not None
                 )
                 replace = self.update_dict(replace, module)
                 model._modules[name] = replace
@@ -91,8 +109,14 @@ class FishLeg(Optimizer):
         # TODO: Error checking to check that model includes some auxiliary arguments.
 
         return model
+    
+    def update_aux(self) -> None:
+        """Performs a single auxliarary parameter update
+        using Adam. By minimizing the following objective:
 
-    def update_aux(self):
+            model.nll(Θ + εQ(λ)g) + model.nll(Θ - εQ(λ)g) - 2ε^2g^T Q(λ)g 
+        
+        """
         self.aux_opt.zero_grad()
         with torch.no_grad():
             data = self.model.sample(self.aux_K)
@@ -126,7 +150,9 @@ class FishLeg(Optimizer):
                 self.plus_model._modules[name]._parameters[para_name].data = p.data
                 self.minus_model._modules[name]._parameters[para_name].data = p.data
 
-    def step(self):
+    def step(self) -> None:
+        """Performes a single optimization step of FishLeg.
+        """
         self.step_t += 1
 
         if self.update_aux_every > 0:
@@ -149,3 +175,13 @@ class FishLeg(Optimizer):
                     p.data.add_(d_p, alpha=-lr)
                     self.plus_model._modules[name]._parameters[para_name].data = p.data
                     self.minus_model._modules[name]._parameters[para_name].data = p.data
+
+
+def update_dict(self, replace: nn.Module, module: nn.Module) -> nn.Module:
+        replace_dict = replace.state_dict()
+        pretrained_dict = {
+            k: v for k, v in module.state_dict().items() if k in replace_dict
+        }
+        replace_dict.update(pretrained_dict)
+        replace.load_state_dict(replace_dict)
+        return replace
