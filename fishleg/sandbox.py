@@ -39,8 +39,8 @@ if __name__ == '__main__':
     data = (x,y)
     likelihood = GaussianLikelihood(sigma_init=1.0, sigma_fixed=True)
 
-    model = Model(data, likelihood, 
-                nn.Linear(2, 5), nn.ReLU(), nn.Linear(5,1), nn.ReLU())
+    model = Model((x,y), GaussianLikelihood(sigma_init=1.0, sigma_fixed=True), 
+                nn.Linear(2, 5), nn.ReLU(), nn.Linear(5,1))
 
     opt = FishLeg(model, lr=1e-2, eps=1e-4, aux_K=5, 
                     update_aux_every=-3, aux_scale_init=1, 

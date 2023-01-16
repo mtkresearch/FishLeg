@@ -12,6 +12,7 @@ class fishLinear(nn.Linear):
                  device=None, dtype=None):
         super(fishLinear, self).__init__(in_features, out_features, bias, device=device, dtype=dtype)
         self.fishleg_aux = ParameterDict({
+            'scale': Parameter(torch.ones(size=(1,))),
             'L': Parameter(torch.eye(in_features +1)),
             'R': Parameter(torch.eye(out_features)),
         })
@@ -21,7 +22,7 @@ class fishLinear(nn.Linear):
     def Qv(aux: dict, v: list):
         L, R = aux['fishleg_aux.L'], aux['fishleg_aux.R']
         u = torch.cat([v[0], v[1][:,None]], dim=-1)
-        z = torch.linalg.multi_dot((R,R.T, u, L,L.T))
+        z = aux['fishleg_aux.scale'] * torch.linalg.multi_dot((R,R.T, u, L,L.T))
         return [z[:,:-1], z[:,-1]]
 
     def cuda(self, device):
@@ -38,23 +39,17 @@ def update_dict(replace, module):
     return replace
 
 class FishLeg(Optimizer):
-    def __init__(self, model, lr=1e-2, eps=1e-4, aux_K=5, update_aux_every=1, aux_scale_init=1, aux_lr=1e-3, aux_betas=(0.9, 0.999), aux_eps=1e-8):
+    def __init__(self, model, lr=1e-2, eps=1e-4, aux_K=5, update_aux_every=-3, aux_scale_init=1, aux_lr=1e-3, aux_betas=(0.9, 0.999), aux_eps=1e-8):
         self.model = model
-        #print(self.model)
-        self.aux_model = self.__init_model_aux(model)
         self.plus_model = copy.deepcopy(self.model)
         self.minus_model = copy.deepcopy(self.model)
-        #print(self.model)
-        #print(self.aux_model)
-        #print(self.plus_model)
-        #print(self.minus_model)
-        #s()
+        self.model = self.__init_model_aux(model)
 
         # partition by modules
-        self.aux_param = [param for name,param in self.aux_model.named_parameters() if "fishleg_aux" in name]
+        self.aux_param = [param for name,param in self.model.named_parameters() if "fishleg_aux" in name]
 
         param_groups = []
-        for (module_name, module) in self.aux_model.named_modules():
+        for module_name, module in self.model.named_modules():
             if hasattr(module, "fishleg_aux"):
                 model_module = recursive_getattr(self.model,module_name)
                 params = {name:param for name, param in model_module.named_parameters() 
@@ -68,10 +63,8 @@ class FishLeg(Optimizer):
                     'name': module_name
                 }
                 param_groups.append(g)
-                print("has attr")
         #TODO: add param_group for modules without aux
-        defaults = dict(lr=lr, 
-                        aux_scale_init=aux_scale_init)
+        defaults = dict(lr=lr)
 
         super(FishLeg, self).__init__(param_groups, defaults)
         self.aux_opt = Adam(self.aux_param, lr=aux_lr, betas=aux_betas, eps=aux_eps)
@@ -86,8 +79,7 @@ class FishLeg(Optimizer):
         
 
     def __init_model_aux(self, model):
-        aux_model = copy.deepcopy(model)
-        for name, module in aux_model.named_modules():
+        for name, module in model.named_modules():
             if isinstance(module, nn.Linear):
                 replace = fishLinear(
                     module.in_features,
@@ -95,8 +87,8 @@ class FishLeg(Optimizer):
                     module.bias is not None
                 )
                 replace = update_dict(replace, module)
-                recursive_setattr(aux_model, name, replace)
-        return aux_model
+                recursive_setattr(model, name, replace)
+        return model
 
 
     def update_aux(self):
@@ -109,7 +101,7 @@ class FishLeg(Optimizer):
             name = group['name']
             
             grad = [p.grad.data for p in group['params']]
-            qg = group['aux_scale_init'] * group['Qv'](group['aux_params'], grad)
+            qg = group['Qv'](group['aux_params'], grad)
 
             for g, d_p, para_name in zip(grad, qg, group['order']):
                 param_plus = self.plus_model._modules[name]._parameters[para_name]
@@ -130,10 +122,8 @@ class FishLeg(Optimizer):
 
         for group in self.param_groups:
             for p, para_name in zip(group['params'], group['order']):
-                param_plus = self.plus_model._modules[name]._parameters[para_name]
-                param_minus = self.minus_model._modules[name]._parameters[para_name]
-                param_plus.data = p.data
-                param_minus.data = p.data
+                self.plus_model._modules[name]._parameters[para_name].data = p.data
+                self.minus_model._modules[name]._parameters[para_name].data = p.data
 
         
     def step(self):
@@ -149,17 +139,14 @@ class FishLeg(Optimizer):
                 
         for group in self.param_groups:
             lr = group['lr']
-            aux_scale_init=group['aux_scale_init']
             order = group['order']
             name = group['name']
 
             if 'aux_params' in group.keys():
                 grad = grad = [p.grad.data for p in group['params']]
-                qg = aux_scale_init * group['Qv'](group['aux_params'], grad)
+                qg = group['Qv'](group['aux_params'], grad)
 
                 for p, d_p, para_name in zip(group['params'], qg, order):
-                    p.data.add_(d_p, alpha=-lr*aux_scale_init)
-                    param_plus = self.plus_model._modules[name]._parameters[para_name]
-                    param_minus = self.minus_model._modules[name]._parameters[para_name]
-                    param_plus.data = p.data
-                    param_minus.data = p.data
+                    p.data.add_(d_p, alpha=-lr)
+                    self.plus_model._modules[name]._parameters[para_name].data = p.data
+                    self.minus_model._modules[name]._parameters[para_name].data = p.data
