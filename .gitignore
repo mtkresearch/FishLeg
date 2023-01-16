@@ -134,3 +134,5 @@ dmypy.json
 *.DS_Store
 
 *.ipynb
+
+src/optim/docs

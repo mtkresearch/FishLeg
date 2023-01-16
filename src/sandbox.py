@@ -41,7 +41,6 @@ if __name__ == "__main__":
         eps=1e-4,
         aux_K=5,
         update_aux_every=-3,
-        aux_scale_init=1,
         aux_lr=1e-3,
         aux_betas=(0.9, 0.999),
         aux_eps=1e-8,
