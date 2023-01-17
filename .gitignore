@@ -135,4 +135,4 @@ dmypy.json
 
 *.ipynb
 
-src/optim/docs
+src/optim/sphinx
