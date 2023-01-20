@@ -28,6 +28,14 @@ FishLeg.fishleg\_likelihood module
    :undoc-members:
    :show-inheritance:
 
+FishLeg.utils module
+--------------------
+
+.. automodule:: FishLeg.utils
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Module contents
 ---------------
 

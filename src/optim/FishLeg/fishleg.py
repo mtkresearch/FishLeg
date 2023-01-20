@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Callable
 import torch
 import torch.nn as nn
 import copy
@@ -9,15 +9,25 @@ from .fishleg_layers import FISH_LAYERS
 
 
 class FishLeg(Optimizer):
-    """Implement FishLeg algorithm.
+    r"""Implement FishLeg algorithm.
 
     :param torch.nn.Module model: a pytorch neural network module,
                 can be nested in a tree structure
+    :param Callable[[nn.Module, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]] draw:
+                Sampling function that takes a model :math:`f` and input data :math:`\mathbf X`, 
+                and returns :math:`(\mathbf X, \mathbf y)`, 
+                where :math:`\mathbf y` is sampled from 
+                the conditional distribution :math:`p(\mathbf y|f(\mathbf X))`
+    :param Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor] nll:
+                A function that takes a model and data, and evaluate the negative
+                log-likelihood.
+    :param Callable[[int], Tuple[torch.Tensor, torch.Tensor]] dataloader:
+                A function that takes a batch size as input and output dataset 
+                with corresponding size.
     :param float lr: learning rate,
                 for the parameters of the input model using FishLeg (default: 1e-2)
     :param float eps: a small scalar, to evaluate the auxiliary loss
                 in the direction of gradient of model parameters (default: 1e-4)
-    :param int aux_K: number of sample to evaluate the entropy (default: 5)
 
     :param int update_aux_every: number of iteration after which an auxiliary
                 update is executed, if negative, then run -update_aux_every auxiliary
@@ -29,14 +39,60 @@ class FishLeg(Optimizer):
                 (default: (0.9, 0.999))
     :param float aux_eps: term added to the denominator to improve
                 numerical stability for auxiliary parameters (default: 1e-8)
+
+    Example:
+        >>> auxloader = torch.utils.data.DataLoader(train_data, shuffle=True, batch_size=100)
+        >>> trainloader = torch.utils.data.DataLoader(train_data, shuffle=True, batch_size=100)
+
+        >>> likelihood = FixedGaussianLikelihood(sigma_fixed=1.0)
+
+        >>> def nll(model, data):
+        >>>     data_x, data_y = data
+        >>>     pred_y = model.forward(data_x)
+        >>>     return likelihood.nll(data_y, pred_y)
+
+        >>> def draw(model, data_x):
+        >>>     pred_y = model.forward(data_x)
+        >>>     return (data_x, likelihood.draw(pred_y))
+
+        >>> def dataloader():
+        >>>     data_x, _ = next(iter(auxloader))
+        >>>     return data_x
+
+
+        >>> model = nn.Sequential(
+        >>>     nn.Linear(2, 5),
+        >>>     nn.ReLU(),
+        >>>     nn.Linear(5, 1),
+        >>> )
+
+        >>> opt = FishLeg(
+        >>>     model,
+        >>>     draw,
+        >>>     nll,
+        >>>     dataloader
+        >>> )
+
+        >>> for iteration in range(100):
+        >>>     data_x, data_y = next(iter(trainloader))
+        >>>     opt.zero_grad()
+        >>>     pred_y = model(data_x)
+        >>>     loss = nn.MSELoss()(data_y, pred_y)
+        >>>     loss.backward()
+        >>>     opt.step()
+        >>>     if iteration % 10 == 0:
+        >>>         print(loss.detach())
+    
     """
 
     def __init__(
         self,
         model: nn.Module,
+        draw: Callable[[nn.Module, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
+        nll: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
+        dataloader: Callable[[], Tuple[torch.Tensor, torch.Tensor]],
         lr: float = 1e-2,
         eps: float = 1e-4,
-        aux_K: int = 5,
         update_aux_every: int = -3,
         aux_lr: float = 1e-3,
         aux_betas: Tuple[float, float] = (0.9, 0.999),
@@ -46,6 +102,10 @@ class FishLeg(Optimizer):
         self.plus_model = copy.deepcopy(self.model)
         self.minus_model = copy.deepcopy(self.model)
         self.model = self.init_model_aux(model)
+
+        self.draw = draw
+        self.nll = nll
+        self.dataloader = dataloader
 
         # partition by modules
         self.aux_param = [
@@ -81,7 +141,6 @@ class FishLeg(Optimizer):
         super(FishLeg, self).__init__(param_groups, defaults)
         self.aux_opt = Adam(self.aux_param, lr=aux_lr, betas=aux_betas, eps=aux_eps)
         self.eps = eps
-        self.aux_K = aux_K
         self.update_aux_every = update_aux_every
         self.aux_lr = aux_lr
         self.aux_betas = aux_betas
@@ -128,9 +187,11 @@ class FishLeg(Optimizer):
         where :math:`\\theta` is the parameters of model, :math:`\lambda` is the
         auxliarary parameters.
         """
+        data_x = self.dataloader()
+
         self.aux_opt.zero_grad()
         with torch.no_grad():
-            data = self.model.sample(self.aux_K)
+            data = self.draw(self.model, data_x)
 
         aux_loss = 0.0
         for group in self.param_groups:
@@ -149,8 +210,8 @@ class FishLeg(Optimizer):
                 param_minus.add_(d_p, alpha=-self.eps)
                 aux_loss -= 2 * torch.sum(g * d_p)
 
-        h_plus = self.plus_model.nll(data)
-        h_minus = self.minus_model.nll(data)
+        h_plus = self.nll(self.plus_model, data)
+        h_minus = self.nll(self.minus_model, data)
         aux_loss += (h_plus + h_minus) / (self.eps**2)
 
         aux_loss.backward()

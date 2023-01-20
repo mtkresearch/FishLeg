@@ -1,29 +1,17 @@
-import numpy as np
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import ParameterDict, Parameter
+from abc import abstractmethod
 
 from typing import Any, List, Dict, Tuple
-
-
-class FishModel:
-    def nll(self, data):
-        data_x, data_y = data
-        pred_y = self.forward(data_x)
-        return self.likelihood.nll(None, pred_y, data_y)
-
-    def sample(self, K):
-        data_x = self.data[0][np.random.randint(0, self.N, K)]
-        pred_y = self.forward(data_x)
-        return (data_x, self.likelihood.sample(None, pred_y))
 
 
 class FishModule(nn.Module):
     """Base class for all neural network modules in FishLeg to 
 
-    #. Initialize auxiliary parameters, :math: `\lambda` and its forms, :math: `Q(\lambda)`.
-    #. Specify quick calculation of :math: `Q(\lambda)v` products.
+    #. Initialize auxiliary parameters, :math:`\lambda` and its forms, :math:`Q(\lambda)`.
+    #. Specify quick calculation of :math:`Q(\lambda)v` products.
     
     :param torch.nn.ParameterDict fishleg_aux: auxiliary parameters 
                 with their initialization, including an additional parameter, scale, 
@@ -42,8 +30,17 @@ class FishModule(nn.Module):
         super(FishModule, self).__init__(*args, **kwargs)
         self.__setattr__('fishleg_aux', ParameterDict())
         self.__setattr__('order', List)
-    
-    @staticmethod
+
+    @property
+    def name(self) -> str:
+        return self._layer_name
+
+    def cuda(self, device) -> None:
+        super.cuda(device)
+        for p in self.fishleg_aux.values:
+            p.to(device)
+
+    @abstractmethod
     def Qv(aux: Dict, v: Tuple[Tensor, ...]) -> Tuple[Tensor, ...]:
         """ :math:`Q(\lambda)` is a positive definite matrix which will effectively 
         estimate the inverse damped Fisher Information Matrix. Appropriate choices 
@@ -90,10 +87,6 @@ class FishLinear(nn.Linear, FishModule):
         )
         self.order = ["weight", "bias"]
 
-    @property
-    def name(self) -> str:
-        return self._layer_name
-
     @staticmethod
     def Qv(aux: Dict, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         '''For fully-connected layers, the default structure of :math:`Q` as a
@@ -103,7 +96,7 @@ class FishLinear(nn.Linear, FishModule):
                     Q_l = (R_lR_l^T \otimes L_lL_l^T)
 
         where :math:`l` denotes the l-th layer. The matrix :math:`R_l` has size 
-        :math:`(N_l-1 + 1) \\times (N_l-1 + 1)` while the matrix :math:`L_l` has 
+        :math:`(N_{l-1} + 1) \\times (N_{l-1} + 1)` while the matrix :math:`L_l` has 
         size :math:`N_l \\times N_l`. The auxiliarary parameters :math:`\lambda` 
         are represented by the matrices :math:`L_l, R_l`.
         
@@ -112,11 +105,6 @@ class FishLinear(nn.Linear, FishModule):
         u = torch.cat([v[0], v[1][:, None]], dim=-1)
         z = aux["fishleg_aux.scale"] * torch.linalg.multi_dot((R, R.T, u, L, L.T))
         return (z[:, :-1], z[:, -1])
-
-    def cuda(self, device) -> None:
-        super.cuda(device)
-        for p in self.fishleg_aux.values:
-            p.to(device)
 
 
 FISH_LAYERS = {
