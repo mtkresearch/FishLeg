@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import copy
 from torch.optim import Optimizer, Adam
+from .utils import recursive_setattr, recursive_getattr
 
 from .fishleg_layers import FISH_LAYERS
 
@@ -10,18 +11,18 @@ from .fishleg_layers import FISH_LAYERS
 class FishLeg(Optimizer):
     """Implement FishLeg algorithm.
 
-    :param torch.nn.Module model: a pytorch neural network module, 
+    :param torch.nn.Module model: a pytorch neural network module,
                 can be nested in a tree structure
     :param float lr: learning rate,
                 for the parameters of the input model using FishLeg (default: 1e-2)
-    :param float eps: a small scalar, to evaluate the auxiliary loss 
+    :param float eps: a small scalar, to evaluate the auxiliary loss
                 in the direction of gradient of model parameters (default: 1e-4)
     :param int aux_K: number of sample to evaluate the entropy (default: 5)
 
-    :param int update_aux_every: number of iteration after which an auxiliary 
-                update is executed, if negative, then run -update_aux_every auxiliary 
+    :param int update_aux_every: number of iteration after which an auxiliary
+                update is executed, if negative, then run -update_aux_every auxiliary
                 updates in each outer iteration. (default: -3)
-    :param float aux_lr: learning rate for the auxiliary parameters, 
+    :param float aux_lr: learning rate for the auxiliary parameters,
                 using Adam (default: 1e-3)
     :param Tuple[float, float] aux_betas: coefficients used for computing
                 running averages of gradient and its square for auxiliary parameters
@@ -29,6 +30,7 @@ class FishLeg(Optimizer):
     :param float aux_eps: term added to the denominator to improve
                 numerical stability for auxiliary parameters (default: 1e-8)
     """
+
     def __init__(
         self,
         model: nn.Module,
@@ -38,7 +40,7 @@ class FishLeg(Optimizer):
         update_aux_every: int = -3,
         aux_lr: float = 1e-3,
         aux_betas: Tuple[float, float] = (0.9, 0.999),
-        aux_eps: float = 1e-8
+        aux_eps: float = 1e-8,
     ) -> None:
         self.model = model
         self.plus_model = copy.deepcopy(self.model)
@@ -55,11 +57,10 @@ class FishLeg(Optimizer):
         param_groups = []
         for module_name, module in self.model.named_modules():
             if hasattr(module, "fishleg_aux"):
+                model_module = recursive_getattr(self.model, module_name)
                 params = {
                     name: param
-                    for name, param in self.model._modules[
-                        module_name
-                    ].named_parameters()
+                    for name, param in model_module.named_parameters()
                     if "fishleg_aux" not in name
                 }
                 g = {
@@ -81,7 +82,7 @@ class FishLeg(Optimizer):
         self.aux_opt = Adam(self.aux_param, lr=aux_lr, betas=aux_betas, eps=aux_eps)
         self.eps = eps
         self.aux_K = aux_K
-        self.update_aux_every = update_aux_every 
+        self.update_aux_every = update_aux_every
         self.aux_lr = aux_lr
         self.aux_betas = aux_betas
         self.aux_eps = aux_eps
@@ -89,15 +90,15 @@ class FishLeg(Optimizer):
 
     def init_model_aux(self, model: nn.Module) -> nn.Module:
         """Given a model to optimize, parameters can be devided to
-        
+
         #. those fixed as pre-trained.
         #. those required to optimize using FishLeg.
 
         Replace modules in the second group with FishLeg modules.
 
         Args:
-            model (:class:`torch.nn.Module`, required): 
-                A model containing modules to replace with FishLeg modules 
+            model (:class:`torch.nn.Module`, required):
+                A model containing modules to replace with FishLeg modules
                 containing extra functionality related to FishLeg algorithm.
         Returns:
             :class:`torch.nn.Module`, the replaced model.
@@ -105,12 +106,10 @@ class FishLeg(Optimizer):
         for name, module in model.named_modules():
             try:
                 replace = FISH_LAYERS[type(module).__name__.lower()](
-                    module.in_features, 
-                    module.out_features, 
-                    module.bias is not None
+                    module.in_features, module.out_features, module.bias is not None
                 )
                 replace = update_dict(replace, module)
-                model._modules[name] = replace
+                recursive_setattr(model, name, replace)
             except KeyError:
                 pass
 
@@ -118,13 +117,13 @@ class FishLeg(Optimizer):
         # TODO: Error checking to check that model includes some auxiliary arguments.
 
         return model
-    
+
     def update_aux(self) -> None:
         """Performs a single auxliarary parameter update
         using Adam. By minimizing the following objective:
 
         .. math::
-            nll(model, \\theta + \epsilon Q(\lambda)g) + nll(model, \\theta - \epsilon Q(\lambda)g) - 2\epsilon^2g^T Q(\lambda)g 
+            nll(model, \\theta + \epsilon Q(\lambda)g) + nll(model, \\theta - \epsilon Q(\lambda)g) - 2\epsilon^2g^T Q(\lambda)g
 
         where :math:`\\theta` is the parameters of model, :math:`\lambda` is the
         auxliarary parameters.
@@ -163,8 +162,7 @@ class FishLeg(Optimizer):
                 self.minus_model._modules[name]._parameters[para_name].data = p.data
 
     def step(self) -> None:
-        """Performes a single optimization step of FishLeg.
-        """
+        """Performes a single optimization step of FishLeg."""
         self.step_t += 1
 
         if self.update_aux_every > 0:
@@ -190,10 +188,10 @@ class FishLeg(Optimizer):
 
 
 def update_dict(replace: nn.Module, module: nn.Module) -> nn.Module:
-        replace_dict = replace.state_dict()
-        pretrained_dict = {
-            k: v for k, v in module.state_dict().items() if k in replace_dict
-        }
-        replace_dict.update(pretrained_dict)
-        replace.load_state_dict(replace_dict)
-        return replace
+    replace_dict = replace.state_dict()
+    pretrained_dict = {
+        k: v for k, v in module.state_dict().items() if k in replace_dict
+    }
+    replace_dict.update(pretrained_dict)
+    replace.load_state_dict(replace_dict)
+    return replace
