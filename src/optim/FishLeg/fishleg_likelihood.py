@@ -1,5 +1,6 @@
 import torch
 from torch.distributions.categorical import Categorical
+from torch.distributions.bernoulli import  Bernoulli
 from torch.nn.functional import one_hot, log_softmax
 
 from abc import abstractmethod
@@ -111,11 +112,12 @@ class BernoulliLikelihood(FishLikelihood):
 
 
     def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
-        return torch.nn.BCEWithLogitsLoss(observations, preds)
+        max_val = torch.clip(-preds, 0, None)
+        return torch.sum(preds *(1.0- observations) + max_val + torch.log(torch.exp(-max_val) \
+                      + torch.exp((-preds - max_val))))/preds.shape[0]
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
-        pred_dist = torch.sigmoid(preds)
-        return 1.0 * torch.bernoulli(pred_dist)
+        return Bernoulli(logits=preds).sample()
 
 
 class SoftMaxLikelihood(FishLikelihood):

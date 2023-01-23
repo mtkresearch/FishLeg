@@ -43,36 +43,35 @@ class FishLeg(Optimizer):
     Example:
         >>> auxloader = torch.utils.data.DataLoader(train_data, shuffle=True, batch_size=100)
         >>> trainloader = torch.utils.data.DataLoader(train_data, shuffle=True, batch_size=100)
-
+        >>>
         >>> likelihood = FixedGaussianLikelihood(sigma_fixed=1.0)
-
+        >>>
         >>> def nll(model, data):
         >>>     data_x, data_y = data
         >>>     pred_y = model.forward(data_x)
         >>>     return likelihood.nll(data_y, pred_y)
-
+        >>>
         >>> def draw(model, data_x):
         >>>     pred_y = model.forward(data_x)
         >>>     return (data_x, likelihood.draw(pred_y))
-
+        >>>
         >>> def dataloader():
         >>>     data_x, _ = next(iter(auxloader))
         >>>     return data_x
-
-
+        >>>
         >>> model = nn.Sequential(
         >>>     nn.Linear(2, 5),
         >>>     nn.ReLU(),
         >>>     nn.Linear(5, 1),
         >>> )
-
+        >>>
         >>> opt = FishLeg(
         >>>     model,
         >>>     draw,
         >>>     nll,
         >>>     dataloader
         >>> )
-
+        >>>
         >>> for iteration in range(100):
         >>>     data_x, data_y = next(iter(trainloader))
         >>>     opt.zero_grad()
@@ -97,6 +96,7 @@ class FishLeg(Optimizer):
         aux_lr: float = 1e-3,
         aux_betas: Tuple[float, float] = (0.9, 0.999),
         aux_eps: float = 1e-8,
+        damping: float = 1e-5
     ) -> None:
         self.model = model
         self.plus_model = copy.deepcopy(self.model)
@@ -145,6 +145,7 @@ class FishLeg(Optimizer):
         self.aux_lr = aux_lr
         self.aux_betas = aux_betas
         self.aux_eps = aux_eps
+        self.damping = damping
         self.step_t = 0
 
     def init_model_aux(self, model: nn.Module) -> nn.Module:
@@ -194,6 +195,7 @@ class FishLeg(Optimizer):
             data = self.draw(self.model, data_x)
 
         aux_loss = 0.0
+        norm = 0.0
         for group in self.param_groups:
             name = group["name"]
 
@@ -201,19 +203,26 @@ class FishLeg(Optimizer):
             qg = group["Qv"](group["aux_params"], grad)
 
             for g, d_p, para_name in zip(grad, qg, group["order"]):
-                param_plus = self.plus_model._modules[name]._parameters[para_name]
-                param_plus = param_plus.detach()
-                param_minus = self.minus_model._modules[name]._parameters[para_name]
-                param_minus = param_minus.detach()
+                #self.plus_model._modules[name]._parameters[para_name] = self.plus_model._modules[name]._parameters[para_name].detach()
+                #param_plus = param_plus.detach()
+                #self.minus_model._modules[name]._parameters[para_name] = self.minus_model._modules[name]._parameters[para_name].detach()
+                #param_minus = param_minus.detach()                
+                self.plus_model._modules[name]._parameters[para_name] = self.plus_model._modules[name]._parameters[para_name].data + d_p * self.eps
+                self.minus_model._modules[name]._parameters[para_name] = self.minus_model._modules[name]._parameters[para_name].data - d_p * self.eps
+                
+                #self.plus_model._modules[name]._parameters[para_name].add_(d_p, alpha=self.eps)
+                #self.minus_model._modules[name]._parameters[para_name].add_(d_p, alpha=-1.*self.eps)
+                #### TODO: Check why this does not work.
 
-                param_plus.add_(d_p, alpha=self.eps)
-                param_minus.add_(d_p, alpha=-self.eps)
                 aux_loss -= 2 * torch.sum(g * d_p)
+                aux_loss += self.damping * torch.sum(torch.square(d_p))
+                norm += torch.sum(torch.square(g))
+
 
         h_plus = self.nll(self.plus_model, data)
         h_minus = self.nll(self.minus_model, data)
         aux_loss += (h_plus + h_minus) / (self.eps**2)
-
+        aux_loss /= norm
         aux_loss.backward()
         self.aux_opt.step()
 
