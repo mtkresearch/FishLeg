@@ -1,11 +1,16 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import torchvision
+import time
 import os
 import gzip
 import urllib.request
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import torch.optim as optim
+import math
+
+torch.set_default_dtype(torch.float32)
 
 from optim.FishLeg import FishLeg, FixedGaussianLikelihood, BernoulliLikelihood
 
@@ -86,7 +91,8 @@ class ImageDataSet(object):
             self._index_in_epoch = batch_size
             assert batch_size <= self._num_examples
         end = self._index_in_epoch
-        return torch.from_numpy(self._images[start:end]), torch.from_numpy(self._labels[start:end])
+        return torch.from_numpy(self._images[start:end]).to(torch.float32), \
+                torch.from_numpy(self._labels[start:end]).to(torch.float32)
 
     
     @property
@@ -217,9 +223,16 @@ if __name__ == "__main__":
     print("device", device)
 
     ## Hyperparams
-    batch_size = 512
-    epochs = 20
-    learning_rate = 1e-3
+    batch_size = 100
+    epochs = 10
+    eta_adam = 1e-4
+    eta_fl = 7e-2
+    eta_sgd = 0.03
+    aux_eta = 1e-3
+    weight_decay = 1e-5
+    beta = 0.9
+    damping = 3e-1
+    eps = 5e-4
 
     ## Dataset
     dataset = read_data_sets('MNIST', '../data/', if_autoencoder=True)
@@ -241,8 +254,63 @@ if __name__ == "__main__":
     def dataloader():
         data_x, _ = aux_dist.sample(batch_size)
         return data_x
+    
+    
+    model = nn.Sequential(
+        nn.Linear(784, 1000, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(1000, 500, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(500, 250, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(250, 30, dtype=torch.float32),
+        nn.Linear(30, 250, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(250, 500, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(500, 1000, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(1000, 784, dtype=torch.float32),
+        nn.Sigmoid()
+    )
 
 
+    opt = FishLeg(
+        model,
+        draw,
+        nll,
+        dataloader,
+        lr=eta_fl,
+        eps=eps,
+        beta=beta,
+        weight_decay=weight_decay,
+        update_aux_every=10,
+        aux_lr=aux_eta,
+        aux_betas=(0.9, 0.999),
+        aux_eps=1e-8,
+        damping=damping,
+        init_scale=1.0
+    )
+    
+    FL_time = []
+    LOSS = []
+    st = time.time()
+    for e in range(1, epochs+1):
+        print("######## EPOCH", e)
+        for t, j in enumerate(range(0, len(class_data), batch_size)):    
+            D = input_dist.sample(batch_size)
+            opt.zero_grad()
+            loss = nll(opt.model, D)
+            loss.backward()
+            opt.step()
+            if t % 50 == 0:
+                print(t, loss.detach().numpy())
+                FL_time.append(time.time() - st)
+                LOSS.append(loss.detach().numpy())
+    
+    plt.plot(FL_time, LOSS, label='Fishleg')
+    
+    
     model = nn.Sequential(
         nn.Linear(784, 1000),
         nn.ReLU(),
@@ -257,24 +325,19 @@ if __name__ == "__main__":
         nn.ReLU(),
         nn.Linear(500, 1000),
         nn.ReLU(),
-        nn.Linear(1000, 784)
+        nn.Linear(1000, 784),
+        nn.Sigmoid()
     )
 
-    opt = FishLeg(
-        model,
-        draw,
-        nll,
-        dataloader,
-        lr=0.01,
-        eps=1e-4,
-        update_aux_every=10,
-        aux_lr=1e-4,
-        aux_betas=(0.9, 0.999),
-        aux_eps=1e-8,
-        damping=1e-3
-    )
+    opt = optim.Adam(model.parameters(), 
+                    lr=eta_adam, 
+                    betas=(0.9, 0.999), 
+                    weight_decay=weight_decay,
+                    eps=1e-8)
 
-    
+    FL_time = []
+    LOSS = []
+    st = time.time()
     for e in range(1, epochs+1):
         print("######## EPOCH", e)
         for t, j in enumerate(range(0, len(class_data), batch_size)):    
@@ -283,8 +346,13 @@ if __name__ == "__main__":
             loss = nll(model, D)
             loss.backward()
             opt.step()
-            if t % 10 == 0:
-                print(loss.detach())
-            #for group in opt.param_groups:
-            #    for para in group['params']:
-            #        print(para.grad.data)
+            
+            if t % 50 == 0:
+                print(loss.detach().numpy())
+                FL_time.append(time.time() - st)
+                LOSS.append(loss.detach().numpy())
+
+    plt.plot(FL_time, LOSS, label='Adam')
+    plt.legend()
+
+    plt.savefig("result/result.png", dpi=300)

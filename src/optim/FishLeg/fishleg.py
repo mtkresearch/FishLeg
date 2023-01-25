@@ -1,8 +1,10 @@
 from typing import Optional, Tuple, Callable
 import torch
 import torch.nn as nn
+from torch.nn import Parameter
 import copy
 from torch.optim import Optimizer, Adam
+from torch.optim.optimizer import _use_grad_for_differentiable
 from .utils import recursive_setattr, recursive_getattr
 
 from .fishleg_layers import FISH_LAYERS
@@ -92,11 +94,15 @@ class FishLeg(Optimizer):
         dataloader: Callable[[], Tuple[torch.Tensor, torch.Tensor]],
         lr: float = 1e-2,
         eps: float = 1e-4,
+        weight_decay: float = 1e-5,
+        beta: float = 0.9,
+        init_scale: float = 1.0,
         update_aux_every: int = -3,
         aux_lr: float = 1e-3,
         aux_betas: Tuple[float, float] = (0.9, 0.999),
         aux_eps: float = 1e-8,
-        damping: float = 1e-5
+        damping: float = 1e-5,
+        differentiable: bool = False
     ) -> None:
         self.model = model
         self.plus_model = copy.deepcopy(self.model)
@@ -125,27 +131,25 @@ class FishLeg(Optimizer):
                 }
                 g = {
                     "params": [params[name] for name in module.order],
-                    "aux_params": {
-                        name: param
-                        for name, param in module.named_parameters()
-                        if "fishleg_aux" in name
-                    },
+                    "gradbar": [torch.zeros_like(params[name]) for name in module.order],
                     "Qv": module.Qv,
                     "order": module.order,
                     "name": module_name,
                 }
                 param_groups.append(g)
         # TODO: add param_group for modules without aux
-        defaults = dict(lr=lr)
+        defaults = dict(lr=lr, differentiable=differentiable)
 
         super(FishLeg, self).__init__(param_groups, defaults)
-        self.aux_opt = Adam(self.aux_param, lr=aux_lr, betas=aux_betas, eps=aux_eps)
+        self.aux_opt = Adam(self.aux_param, lr=aux_lr, betas=aux_betas, eps=aux_eps, weight_decay=weight_decay)
         self.eps = eps
         self.update_aux_every = update_aux_every
         self.aux_lr = aux_lr
         self.aux_betas = aux_betas
         self.aux_eps = aux_eps
         self.damping = damping
+        self.weight_decay = weight_decay
+        self.beta = beta
         self.step_t = 0
 
     def init_model_aux(self, model: nn.Module) -> nn.Module:
@@ -193,68 +197,69 @@ class FishLeg(Optimizer):
         self.aux_opt.zero_grad()
         with torch.no_grad():
             data = self.draw(self.model, data_x)
-
+        
+        
         aux_loss = 0.0
-        norm = 0.0
+        g2 = 0.0
         for group in self.param_groups:
             name = group["name"]
 
             grad = [p.grad.data for p in group["params"]]
-            qg = group["Qv"](group["aux_params"], grad)
+            qg = group["Qv"](grad)
 
-            for g, d_p, para_name in zip(grad, qg, group["order"]):
+            for p, g, d_p, para_name in zip(group["params"], grad, qg, group["order"]):
                 #self.plus_model._modules[name]._parameters[para_name] = self.plus_model._modules[name]._parameters[para_name].detach()
                 #param_plus = param_plus.detach()
                 #self.minus_model._modules[name]._parameters[para_name] = self.minus_model._modules[name]._parameters[para_name].detach()
-                #param_minus = param_minus.detach()                
-                self.plus_model._modules[name]._parameters[para_name] = self.plus_model._modules[name]._parameters[para_name].data + d_p * self.eps
-                self.minus_model._modules[name]._parameters[para_name] = self.minus_model._modules[name]._parameters[para_name].data - d_p * self.eps
+                #param_minus = param_minus.detach()  
+                #d_p = d_p * self.scale
+                self.plus_model._modules[name]._parameters[para_name] = p.data + d_p * self.eps
+                self.minus_model._modules[name]._parameters[para_name] = p.data - d_p * self.eps
                 
                 #self.plus_model._modules[name]._parameters[para_name].add_(d_p, alpha=self.eps)
                 #self.minus_model._modules[name]._parameters[para_name].add_(d_p, alpha=-1.*self.eps)
                 #### TODO: Check why this does not work.
-
+                
                 aux_loss -= 2 * torch.sum(g * d_p)
-                aux_loss += self.damping * torch.sum(torch.square(d_p))
-                norm += torch.sum(torch.square(g))
+                aux_loss += self.damping * torch.sum(d_p * d_p)
+                g2 += torch.sum(g * g)
 
+        h_plus = self.nll(self.plus_model, data) / (self.eps**2)
+        h_minus = self.nll(self.minus_model, data) / (self.eps**2)
 
-        h_plus = self.nll(self.plus_model, data)
-        h_minus = self.nll(self.minus_model, data)
-        aux_loss += (h_plus + h_minus) / (self.eps**2)
-        aux_loss /= norm
+        aux_loss = aux_loss + (h_plus + h_minus)
+        aux_loss /= g2
         aux_loss.backward()
+        
         self.aux_opt.step()
+        
 
-        for group in self.param_groups:
-            for p, para_name in zip(group["params"], group["order"]):
-                self.plus_model._modules[name]._parameters[para_name].data = p.data
-                self.minus_model._modules[name]._parameters[para_name].data = p.data
-
+    
     def step(self) -> None:
         """Performes a single optimization step of FishLeg."""
-        self.step_t += 1
-
+        
         if self.update_aux_every > 0:
             if self.step_t % self.update_aux_every == 0:
                 self.update_aux()
         elif self.update_aux_every < 0:
             for _ in range(-self.update_aux_every):
                 self.update_aux()
+        
+        @_use_grad_for_differentiable
+        def helper_step(self):
+            for group in self.param_groups:
+                lr = group["lr"]
 
-        for group in self.param_groups:
-            lr = group["lr"]
-            order = group["order"]
-            name = group["name"]
+                grad = [p.grad.data for p in group["params"]]
+                nat_grad = group["Qv"](grad)
 
-            if "aux_params" in group.keys():
-                grad = grad = [p.grad.data for p in group["params"]]
-                qg = group["Qv"](group["aux_params"], grad)
+                for p, d_p, gbar in zip(group["params"], nat_grad, group["gradbar"]):
+                    gbar.add_(d_p, alpha=(1.-self.beta)/self.beta).mul_(self.beta)
+                    delta = gbar.add(p, alpha=self.weight_decay)
+                    p.add_(delta, alpha=-lr)
 
-                for p, d_p, para_name in zip(group["params"], qg, order):
-                    p.data.add_(d_p, alpha=-lr)
-                    self.plus_model._modules[name]._parameters[para_name].data = p.data
-                    self.minus_model._modules[name]._parameters[para_name].data = p.data
+        helper_step(self)
+        self.step_t += 1
 
 
 def update_dict(replace: nn.Module, module: nn.Module) -> nn.Module:

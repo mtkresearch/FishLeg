@@ -1,6 +1,7 @@
 import torch
 from torch.distributions.categorical import Categorical
 from torch.distributions.bernoulli import  Bernoulli
+from torch.distributions.normal import Normal
 from torch.nn.functional import one_hot, log_softmax
 
 from abc import abstractmethod
@@ -88,13 +89,15 @@ class FixedGaussianLikelihood(FishLikelihood):
         return self.sigma_fixed
 
     def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
-        return 0.5 * (
-            torch.square((observations - preds) / self.sigma_fixed).mean(dim=0).sum()
-            + torch.log(self.sigma_fixed**2)
-        ) 
+        #return 0.5 * (torch.square((observations - preds) / self.sigma_fixed).sum())/preds.shape[0] + \
+        #            torch.log(self.sigma_fixed**2)
+        dist = Normal(loc=preds, scale=self.sigma_fixed)
+        return -dist.log_prob(observations).sum()/preds.shape[0]
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
-        return preds + torch.normal(0, self.sigma_fixed, size=preds.shape)
+        #return preds + torch.normal(0, self.sigma_fixed, size=preds.shape)
+        dist = Normal(loc=preds, scale=self.sigma_fixed)
+        return dist.sample()
 
 
 class BernoulliLikelihood(FishLikelihood):
@@ -112,12 +115,15 @@ class BernoulliLikelihood(FishLikelihood):
 
 
     def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
-        max_val = torch.clip(-preds, 0, None)
-        return torch.sum(preds *(1.0- observations) + max_val + torch.log(torch.exp(-max_val) \
-                      + torch.exp((-preds - max_val))))/preds.shape[0]
+        #max_val = torch.clip(torch.max(-preds), 0, None)
+        #result = torch.sum(preds *(1.0- observations) + max_val + torch.log(torch.exp(-max_val) \
+        #              + torch.exp((-preds - max_val))))/preds.shape[0]
 
+        result = -torch.sum(torch.log(1-preds + 1e-5)*(1.-observations) + torch.log(preds + 1e-5)*observations)/preds.shape[0]
+        return result
+        
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
-        return Bernoulli(logits=preds).sample()
+        return Bernoulli(probs=preds).sample()
 
 
 class SoftMaxLikelihood(FishLikelihood):

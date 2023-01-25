@@ -41,7 +41,7 @@ class FishModule(nn.Module):
             p.to(device)
 
     @abstractmethod
-    def Qv(aux: Dict, v: Tuple[Tensor, ...]) -> Tuple[Tensor, ...]:
+    def Qv(self, aux: Dict, v: Tuple[Tensor, ...]) -> Tuple[Tensor, ...]:
         """ :math:`Q(\lambda)` is a positive definite matrix which will effectively 
         estimate the inverse damped Fisher Information Matrix. Appropriate choices 
         for :math:`Q` should take into account the architecture of the model/module.
@@ -87,8 +87,7 @@ class FishLinear(nn.Linear, FishModule):
         )
         self.order = ["weight", "bias"]
 
-    @staticmethod
-    def Qv(aux: Dict, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
+    def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         '''For fully-connected layers, the default structure of :math:`Q` as a
         block-diaglonal matrix is,
 
@@ -101,9 +100,9 @@ class FishLinear(nn.Linear, FishModule):
         are represented by the matrices :math:`L_l, R_l`.
         
         '''
-        L, R = aux["fishleg_aux.L"], aux["fishleg_aux.R"]
+        L, R = self.fishleg_aux["L"], self.fishleg_aux["R"]
         u = torch.cat([v[0], v[1][:, None]], dim=-1)
-        z = aux["fishleg_aux.scale"] * torch.linalg.multi_dot((R, R.T, u, L, L.T))
+        z = self.fishleg_aux["scale"] * torch.linalg.multi_dot((R, R.T, u, L, L.T))
         return (z[:, :-1], z[:, -1])
 
 
