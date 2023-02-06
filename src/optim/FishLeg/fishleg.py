@@ -7,8 +7,16 @@ from torch.optim import Optimizer, Adam
 from torch.optim.optimizer import _use_grad_for_differentiable
 from .utils import recursive_setattr, recursive_getattr
 
-from .fishleg_layers import FISH_LAYERS
+from .fishleg_layers import FishLinear
 
+def update_dict(replace: nn.Module, module: nn.Module) -> nn.Module:
+    replace_dict = replace.state_dict()
+    pretrained_dict = {
+        k: v for k, v in module.state_dict().items() if k in replace_dict
+    }
+    replace_dict.update(pretrained_dict)
+    replace.load_state_dict(replace_dict)
+    return replace
 
 class FishLeg(Optimizer):
     r"""Implement FishLeg algorithm.
@@ -96,17 +104,22 @@ class FishLeg(Optimizer):
         eps: float = 1e-4,
         weight_decay: float = 1e-5,
         beta: float = 0.9,
-        init_scale: float = 1.0,
         update_aux_every: int = -3,
         aux_lr: float = 1e-3,
         aux_betas: Tuple[float, float] = (0.9, 0.999),
         aux_eps: float = 1e-8,
         damping: float = 1e-5,
-        differentiable: bool = False
+        pre_aux_training: int = 10,
+        differentiable: bool = False,
+        sgd_lr : float = 1e-2
+
     ) -> None:
         self.model = model
         self.plus_model = copy.deepcopy(self.model)
         self.minus_model = copy.deepcopy(self.model)
+        self.sgd_lr = sgd_lr
+        self.lr = lr
+        
         self.model = self.init_model_aux(model)
 
         self.draw = draw
@@ -150,7 +163,9 @@ class FishLeg(Optimizer):
         self.damping = damping
         self.weight_decay = weight_decay
         self.beta = beta
+        self.pre_aux_training = pre_aux_training
         self.step_t = 0
+        
 
     def init_model_aux(self, model: nn.Module) -> nn.Module:
         """Given a model to optimize, parameters can be devided to
@@ -168,12 +183,15 @@ class FishLeg(Optimizer):
             :class:`torch.nn.Module`, the replaced model.
         """
         for name, module in model.named_modules():
+
             try:
-                replace = FISH_LAYERS[type(module).__name__.lower()](
-                    module.in_features, module.out_features, module.bias is not None
-                )
-                replace = update_dict(replace, module)
-                recursive_setattr(model, name, replace)
+                if isinstance(module, nn.Linear):
+                    replace = FishLinear(
+                        module.in_features, module.out_features, module.bias is not None,
+                        init_scale=self.sgd_lr/self.lr
+                    )
+                    replace = update_dict(replace, module)
+                    recursive_setattr(model, name, replace)
             except KeyError:
                 pass
 
@@ -197,38 +215,33 @@ class FishLeg(Optimizer):
         self.aux_opt.zero_grad()
         with torch.no_grad():
             data = self.draw(self.model, data_x)
+            g2 = 0.0
+            for group in self.param_groups:
+                for p in group['params']:
+                    g2 += p.grad.data.norm(p=2)**2
+            g2 = torch.sqrt(g2)
         
         
         aux_loss = 0.0
-        g2 = 0.0
         for group in self.param_groups:
             name = group["name"]
 
-            grad = [p.grad.data for p in group["params"]]
+            grad = [p.grad.data/g2 for p in group["params"]]
             qg = group["Qv"](grad)
 
             for p, g, d_p, para_name in zip(group["params"], grad, qg, group["order"]):
-                #self.plus_model._modules[name]._parameters[para_name] = self.plus_model._modules[name]._parameters[para_name].detach()
-                #param_plus = param_plus.detach()
-                #self.minus_model._modules[name]._parameters[para_name] = self.minus_model._modules[name]._parameters[para_name].detach()
-                #param_minus = param_minus.detach()  
-                #d_p = d_p * self.scale
+                
                 self.plus_model._modules[name]._parameters[para_name] = p.data + d_p * self.eps
                 self.minus_model._modules[name]._parameters[para_name] = p.data - d_p * self.eps
                 
-                #self.plus_model._modules[name]._parameters[para_name].add_(d_p, alpha=self.eps)
-                #self.minus_model._modules[name]._parameters[para_name].add_(d_p, alpha=-1.*self.eps)
-                #### TODO: Check why this does not work.
-                
-                aux_loss -= 2 * torch.sum(g * d_p)
-                aux_loss += self.damping * torch.sum(d_p * d_p)
-                g2 += torch.sum(g * g)
+                aux_loss -=  2 * torch.sum(g * d_p)
+                aux_loss += self.damping * d_p.norm(p=2)**2
+        
 
-        h_plus = self.nll(self.plus_model, data) / (self.eps**2)
-        h_minus = self.nll(self.minus_model, data) / (self.eps**2)
+        h_plus = self.nll(self.plus_model, data)
+        h_minus = self.nll(self.minus_model, data)
 
-        aux_loss = aux_loss + (h_plus + h_minus)
-        aux_loss /= g2
+        aux_loss += (h_plus + h_minus) / (self.eps**2)
         aux_loss.backward()
         
         self.aux_opt.step()
@@ -237,6 +250,10 @@ class FishLeg(Optimizer):
     
     def step(self) -> None:
         """Performes a single optimization step of FishLeg."""
+
+        if self.step_t == 0:
+            for _ in range(self.pre_aux_training):
+                self.update_aux()
         
         if self.update_aux_every > 0:
             if self.step_t % self.update_aux_every == 0:
@@ -244,6 +261,8 @@ class FishLeg(Optimizer):
         elif self.update_aux_every < 0:
             for _ in range(-self.update_aux_every):
                 self.update_aux()
+
+        self.step_t += 1
         
         @_use_grad_for_differentiable
         def helper_step(self):
@@ -257,16 +276,8 @@ class FishLeg(Optimizer):
                     gbar.add_(d_p, alpha=(1.-self.beta)/self.beta).mul_(self.beta)
                     delta = gbar.add(p, alpha=self.weight_decay)
                     p.add_(delta, alpha=-lr)
-
+            
         helper_step(self)
-        self.step_t += 1
 
 
-def update_dict(replace: nn.Module, module: nn.Module) -> nn.Module:
-    replace_dict = replace.state_dict()
-    pretrained_dict = {
-        k: v for k, v in module.state_dict().items() if k in replace_dict
-    }
-    replace_dict.update(pretrained_dict)
-    replace.load_state_dict(replace_dict)
-    return replace
+

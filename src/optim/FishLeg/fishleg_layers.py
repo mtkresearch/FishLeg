@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import ParameterDict, Parameter
@@ -64,6 +65,10 @@ class FishModule(nn.Module):
         """
         raise NotImplementedError(f"Module is missing the required \"Qv\" function")
 
+def get_zero_grad_hook(mask):
+    def hook(grad):
+        return grad * mask
+    return hook
 
 class FishLinear(nn.Linear, FishModule):
     def __init__(
@@ -71,6 +76,7 @@ class FishLinear(nn.Linear, FishModule):
         in_features: int,
         out_features: int,
         bias: bool = True,
+        init_scale: float = 1.0,
         device = None,
         dtype = None,
     ) -> None:
@@ -80,11 +86,16 @@ class FishLinear(nn.Linear, FishModule):
         self._layer_name = "Linear"
         self.fishleg_aux = ParameterDict(
             {
-                "scale": Parameter(torch.ones(size=(1,))),
+                "scale": Parameter(torch.ones(1,) * init_scale),
                 "L": Parameter(torch.eye(in_features + 1)),
                 "R": Parameter(torch.eye(out_features)),
             }
         )
+        mask_L = torch.triu(torch.ones_like(self.fishleg_aux['L']))
+        self.fishleg_aux['L'].register_hook(get_zero_grad_hook(mask_L))
+        mask_R = torch.triu(torch.ones_like(self.fishleg_aux['R']))
+        self.fishleg_aux['R'].register_hook(get_zero_grad_hook(mask_R))
+        
         self.order = ["weight", "bias"]
 
     def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
@@ -100,10 +111,12 @@ class FishLinear(nn.Linear, FishModule):
         are represented by the matrices :math:`L_l, R_l`.
         
         '''
-        L, R = self.fishleg_aux["L"], self.fishleg_aux["R"]
+        L = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["L"]
+        R = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["R"]
         u = torch.cat([v[0], v[1][:, None]], dim=-1)
-        z = self.fishleg_aux["scale"] * torch.linalg.multi_dot((R, R.T, u, L, L.T))
+        z = torch.linalg.multi_dot((R, R.T, u, L, L.T))
         return (z[:, :-1], z[:, -1])
+
 
 
 FISH_LAYERS = {

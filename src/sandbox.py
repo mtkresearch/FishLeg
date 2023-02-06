@@ -58,6 +58,12 @@ class ImageDataSet(object):
         self._epochs_completed = 0
         self._index_in_epoch = 0
 
+        # Shuffle the data
+        perm = np.arange(self._num_examples)
+        np.random.shuffle(perm)
+        self._images = self._images[perm]
+        self._labels = self._labels[perm]
+
     @property
     def images(self):
         return self._images
@@ -194,6 +200,27 @@ def read_data_sets(name_dataset, home_path, if_autoencoder = True):
         # see "Reducing the Dimensionality of Data with Neural Networks"
         train_images = np.multiply(train_images, 1.0 / 255.0)
         test_images = np.multiply(test_images, 1.0 / 255.0)
+    elif name_dataset == 'FACES':
+        if_autoencoder = if_autoencoder
+        
+        SOURCE_URL = 'http://www.cs.toronto.edu/~jmartens/'
+        TRAIN_IMAGES = 'newfaces_rot_single.mat'
+        
+        local_file = maybe_download(SOURCE_URL, TRAIN_IMAGES, train_dir)
+        print(f'Data read from {local_file}')
+        import mat4py
+        images_ = mat4py.loadmat(local_file)
+        images_ = np.asarray(images_['newfaces_single'])
+        images_ = np.transpose(images_)
+
+        train_images = images_[:103500]
+        test_images = images_[-41400:]
+
+        train_images = train_images[:, :, np.newaxis, np.newaxis]
+        test_images = test_images[:, :, np.newaxis, np.newaxis]
+        
+        train_labels = train_images
+        test_labels = test_images  
         
     validation_images = train_images[:VALIDATION_SIZE]
     validation_labels = train_labels[:VALIDATION_SIZE]
@@ -226,21 +253,24 @@ if __name__ == "__main__":
     batch_size = 100
     epochs = 10
     eta_adam = 1e-4
-    eta_fl = 7e-2
-    eta_sgd = 0.03
-    aux_eta = 1e-3
+    eta_fl = 5e-2
+    eta_sgd = 1e-2
+    aux_eta = 1e-4
     weight_decay = 1e-5
     beta = 0.9
-    damping = 3e-1
-    eps = 5e-4
+    damping = 1.0
+    eps = 1e-4
 
     ## Dataset
-    dataset = read_data_sets('MNIST', '../data/', if_autoencoder=True)
+    dataset = read_data_sets('FACES', '../data/', if_autoencoder=True)
     input_dist = dataset.train
     aux_dist = dataset.train
+
+    test_dist = dataset.test
+    D_test = test_dist.sample(10000)
     class_data = dataset.train.images
     
-    likelihood = BernoulliLikelihood()
+    likelihood = FixedGaussianLikelihood(sigma_fixed=1.0)
 
     def nll(model, data):
         data_x, data_y = data
@@ -257,44 +287,47 @@ if __name__ == "__main__":
     
     
     model = nn.Sequential(
-        nn.Linear(784, 1000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(1000, 500, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(500, 250, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(250, 30, dtype=torch.float32),
-        nn.Linear(30, 250, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(250, 500, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(500, 1000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(1000, 784, dtype=torch.float32),
-        nn.Sigmoid()
-    )
+            nn.Linear(625, 2000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(2000, 1000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(1000, 500, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(500, 30, dtype=torch.float32),
+            nn.Linear(30, 500, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(500, 1000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(1000, 2000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(2000, 625, dtype=torch.float32)
+        )
 
+    print("lr fl={}, lr sgd={}".format(eta_fl, eta_sgd))
 
     opt = FishLeg(
-        model,
-        draw,
-        nll,
-        dataloader,
-        lr=eta_fl,
-        eps=eps,
-        beta=beta,
-        weight_decay=weight_decay,
-        update_aux_every=10,
-        aux_lr=aux_eta,
-        aux_betas=(0.9, 0.999),
-        aux_eps=1e-8,
-        damping=damping,
-        init_scale=1.0
-    )
+                model,
+                draw,
+                nll,
+                dataloader,
+                lr=eta_fl,
+                eps=eps,
+                beta=beta,
+                weight_decay=1e-5,
+                update_aux_every=10,
+                aux_lr=aux_eta,
+                aux_betas=(0.9, 0.999),
+                aux_eps=1e-8,
+                damping=damping,
+                pre_aux_training=25,
+                sgd_lr=eta_sgd
+            )
     
     FL_time = []
     LOSS = []
+    TEST_LOSS = []
     st = time.time()
+
     for e in range(1, epochs+1):
         print("######## EPOCH", e)
         for t, j in enumerate(range(0, len(class_data), batch_size)):    
@@ -304,30 +337,34 @@ if __name__ == "__main__":
             loss.backward()
             opt.step()
             if t % 50 == 0:
-                print(t, loss.detach().numpy())
                 FL_time.append(time.time() - st)
                 LOSS.append(loss.detach().numpy())
+                test_loss = nll(opt.model, D_test).detach().numpy()
+                TEST_LOSS.append(test_loss)
+
+                print(t, loss.detach().numpy(), test_loss)
+                
     
-    plt.plot(FL_time, LOSS, label='Fishleg')
+    plt.plot(FL_time, LOSS, label='eps={}'.format(eps)) #color=colors_group[i])
+    plt.plot(FL_time, TEST_LOSS, label='eps={} test'.format(eps)) #linestyle='--', color=colors_group[i])
     
     
     model = nn.Sequential(
-        nn.Linear(784, 1000),
-        nn.ReLU(),
-        nn.Linear(1000, 500),
-        nn.ReLU(),
-        nn.Linear(500, 250),
-        nn.ReLU(),
-        nn.Linear(250, 30),
-        nn.Linear(30, 250),
-        nn.ReLU(),
-        nn.Linear(250, 500),
-        nn.ReLU(),
-        nn.Linear(500, 1000),
-        nn.ReLU(),
-        nn.Linear(1000, 784),
-        nn.Sigmoid()
-    )
+            nn.Linear(625, 2000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(2000, 1000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(1000, 500, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(500, 30, dtype=torch.float32),
+            nn.Linear(30, 500, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(500, 1000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(1000, 2000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(2000, 625, dtype=torch.float32)
+        )
 
     opt = optim.Adam(model.parameters(), 
                     lr=eta_adam, 
@@ -337,6 +374,7 @@ if __name__ == "__main__":
 
     FL_time = []
     LOSS = []
+    TEST_LOSS = []
     st = time.time()
     for e in range(1, epochs+1):
         print("######## EPOCH", e)
@@ -348,11 +386,16 @@ if __name__ == "__main__":
             opt.step()
             
             if t % 50 == 0:
-                print(loss.detach().numpy())
                 FL_time.append(time.time() - st)
                 LOSS.append(loss.detach().numpy())
+                test_loss = nll(model, D_test).detach().numpy()
+                TEST_LOSS.append(test_loss)
 
-    plt.plot(FL_time, LOSS, label='Adam')
+                print(t, loss.detach().numpy(), test_loss)
+
+    plt.plot(FL_time, LOSS, label='Adam', color='blue')
+    plt.plot(FL_time, TEST_LOSS, label='Adam_test', linestyle='--', color='blue')
+    
     plt.legend()
 
     plt.savefig("result/result.png", dpi=300)

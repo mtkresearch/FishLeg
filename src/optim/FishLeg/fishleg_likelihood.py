@@ -89,15 +89,11 @@ class FixedGaussianLikelihood(FishLikelihood):
         return self.sigma_fixed
 
     def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
-        #return 0.5 * (torch.square((observations - preds) / self.sigma_fixed).sum())/preds.shape[0] + \
-        #            torch.log(self.sigma_fixed**2)
-        dist = Normal(loc=preds, scale=self.sigma_fixed)
-        return -dist.log_prob(observations).sum()/preds.shape[0]
+        return 0.5 * (torch.square((observations - preds) / self.sigma_fixed).sum())/preds.shape[0] + \
+                    torch.log(self.sigma_fixed**2)
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
-        #return preds + torch.normal(0, self.sigma_fixed, size=preds.shape)
-        dist = Normal(loc=preds, scale=self.sigma_fixed)
-        return dist.sample()
+        return preds + torch.normal(0, self.sigma_fixed, size=preds.shape)
 
 
 class BernoulliLikelihood(FishLikelihood):
