@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Index &mdash; FishLeg  documentation</title>
+  <title>Index &mdash; FishLeg 1.0 documentation</title>
       <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
       <link rel="stylesheet" href="_static/css/theme.css" type="text/css" />
   <!--[if lt IE 9]>
@@ -71,7 +71,6 @@
  <a href="#B"><strong>B</strong></a>
  | <a href="#C"><strong>C</strong></a>
  | <a href="#D"><strong>D</strong></a>
- | <a href="#E"><strong>E</strong></a>
  | <a href="#F"><strong>F</strong></a>
  | <a href="#G"><strong>G</strong></a>
  | <a href="#I"><strong>I</strong></a>
@@ -79,6 +78,7 @@
  | <a href="#N"><strong>N</strong></a>
  | <a href="#O"><strong>O</strong></a>
  | <a href="#Q"><strong>Q</strong></a>
+ | <a href="#R"><strong>R</strong></a>
  | <a href="#S"><strong>S</strong></a>
  | <a href="#T"><strong>T</strong></a>
  | <a href="#U"><strong>U</strong></a>
@@ -96,7 +96,7 @@
 <h2 id="C">C</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishLinear.cuda">cuda() (FishLeg.fishleg_layers.FishLinear method)</a>
+      <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishModule.cuda">cuda() (FishLeg.fishleg_layers.FishModule method)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -104,18 +104,14 @@
 <h2 id="D">D</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.SoftMaxLikelihood.dense_to_one_hot">dense_to_one_hot() (FishLeg.fishleg_likelihood.SoftMaxLikelihood method)</a>
-</li>
-  </ul></td>
-</tr></table>
-
-<h2 id="E">E</h2>
-<table style="width: 100%" class="indextable genindextable"><tr>
-  <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.GaussianLikelihood.ef">ef() (FishLeg.fishleg_likelihood.GaussianLikelihood method)</a>
+      <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.BernoulliLikelihood.draw">draw() (FishLeg.fishleg_likelihood.BernoulliLikelihood method)</a>
 
       <ul>
-        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.SoftMaxLikelihood.ef">(FishLeg.fishleg_likelihood.SoftMaxLikelihood method)</a>
+        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.FishLikelihood.draw">(FishLeg.fishleg_likelihood.FishLikelihood method)</a>
+</li>
+        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.FixedGaussianLikelihood.draw">(FishLeg.fishleg_likelihood.FixedGaussianLikelihood method)</a>
+</li>
+        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.SoftMaxLikelihood.draw">(FishLeg.fishleg_likelihood.SoftMaxLikelihood method)</a>
 </li>
       </ul></li>
   </ul></td>
@@ -156,13 +152,20 @@
         <li><a href="FishLeg.html#module-FishLeg.fishleg_likelihood">module</a>
 </li>
       </ul></li>
+      <li>
+    FishLeg.utils
+
+      <ul>
+        <li><a href="FishLeg.html#module-FishLeg.utils">module</a>
+</li>
+      </ul></li>
       <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.FishLikelihood">FishLikelihood (class in FishLeg.fishleg_likelihood)</a>
 </li>
       <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishLinear">FishLinear (class in FishLeg.fishleg_layers)</a>
 </li>
-      <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishModel">FishModel (class in FishLeg.fishleg_layers)</a>
-</li>
       <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishModule">FishModule (class in FishLeg.fishleg_layers)</a>
+</li>
+      <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.FixedGaussianLikelihood">FixedGaussianLikelihood (class in FishLeg.fishleg_likelihood)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -170,7 +173,11 @@
 <h2 id="G">G</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.GaussianLikelihood">GaussianLikelihood (class in FishLeg.fishleg_likelihood)</a>
+      <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.FixedGaussianLikelihood.get_variance">get_variance (FishLeg.fishleg_likelihood.FixedGaussianLikelihood property)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="FishLeg.html#FishLeg.fishleg_layers.get_zero_grad_hook">get_zero_grad_hook() (in module FishLeg.fishleg_layers)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -180,26 +187,10 @@
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishLinear.in_features">in_features (FishLeg.fishleg_layers.FishLinear attribute)</a>
 </li>
-      <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.BernoulliLikelihood.init_lam">init_lam() (FishLeg.fishleg_likelihood.BernoulliLikelihood method)</a>
-
-      <ul>
-        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.GaussianLikelihood.init_lam">(FishLeg.fishleg_likelihood.GaussianLikelihood method)</a>
-</li>
-        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.SoftMaxLikelihood.init_lam">(FishLeg.fishleg_likelihood.SoftMaxLikelihood method)</a>
-</li>
-      </ul></li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="FishLeg.html#FishLeg.fishleg.FishLeg.init_model_aux">init_model_aux() (FishLeg.fishleg.FishLeg method)</a>
 </li>
-      <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.BernoulliLikelihood.init_theta">init_theta() (FishLeg.fishleg_likelihood.BernoulliLikelihood method)</a>
-
-      <ul>
-        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.GaussianLikelihood.init_theta">(FishLeg.fishleg_likelihood.GaussianLikelihood method)</a>
-</li>
-        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.SoftMaxLikelihood.init_theta">(FishLeg.fishleg_likelihood.SoftMaxLikelihood method)</a>
-</li>
-      </ul></li>
   </ul></td>
 </tr></table>
 
@@ -218,6 +209,8 @@
 </li>
         <li><a href="FishLeg.html#module-FishLeg.fishleg_likelihood">FishLeg.fishleg_likelihood</a>
 </li>
+        <li><a href="FishLeg.html#module-FishLeg.utils">FishLeg.utils</a>
+</li>
       </ul></li>
   </ul></td>
 </tr></table>
@@ -225,14 +218,14 @@
 <h2 id="N">N</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishLinear.name">name (FishLeg.fishleg_layers.FishLinear property)</a>
+      <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishModule.name">name (FishLeg.fishleg_layers.FishModule property)</a>
 </li>
-      <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishModel.nll">nll() (FishLeg.fishleg_layers.FishModel method)</a>
+      <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.BernoulliLikelihood.nll">nll() (FishLeg.fishleg_likelihood.BernoulliLikelihood method)</a>
 
       <ul>
-        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.BernoulliLikelihood.nll">(FishLeg.fishleg_likelihood.BernoulliLikelihood method)</a>
+        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.FishLikelihood.nll">(FishLeg.fishleg_likelihood.FishLikelihood method)</a>
 </li>
-        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.GaussianLikelihood.nll">(FishLeg.fishleg_likelihood.GaussianLikelihood method)</a>
+        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.FixedGaussianLikelihood.nll">(FishLeg.fishleg_likelihood.FixedGaussianLikelihood method)</a>
 </li>
         <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.SoftMaxLikelihood.nll">(FishLeg.fishleg_likelihood.SoftMaxLikelihood method)</a>
 </li>
@@ -251,32 +244,34 @@
 <h2 id="Q">Q</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishLinear.Qv">Qv() (FishLeg.fishleg_layers.FishLinear static method)</a>
+      <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishLinear.Qv">Qv() (FishLeg.fishleg_layers.FishLinear method)</a>
 
       <ul>
-        <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishModule.Qv">(FishLeg.fishleg_layers.FishModule static method)</a>
+        <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishModule.Qv">(FishLeg.fishleg_layers.FishModule method)</a>
 </li>
       </ul></li>
+  </ul></td>
+</tr></table>
+
+<h2 id="R">R</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="FishLeg.html#FishLeg.utils.recursive_getattr">recursive_getattr() (in module FishLeg.utils)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="FishLeg.html#FishLeg.utils.recursive_setattr">recursive_setattr() (in module FishLeg.utils)</a>
+</li>
   </ul></td>
 </tr></table>
 
 <h2 id="S">S</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="FishLeg.html#FishLeg.fishleg_layers.FishModel.sample">sample() (FishLeg.fishleg_layers.FishModel method)</a>
-
-      <ul>
-        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.BernoulliLikelihood.sample">(FishLeg.fishleg_likelihood.BernoulliLikelihood method)</a>
-</li>
-        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.GaussianLikelihood.sample">(FishLeg.fishleg_likelihood.GaussianLikelihood method)</a>
-</li>
-        <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.SoftMaxLikelihood.sample">(FishLeg.fishleg_likelihood.SoftMaxLikelihood method)</a>
-</li>
-      </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="FishLeg.html#FishLeg.fishleg_likelihood.SoftMaxLikelihood">SoftMaxLikelihood (class in FishLeg.fishleg_likelihood)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="FishLeg.html#FishLeg.fishleg.FishLeg.step">step() (FishLeg.fishleg.FishLeg method)</a>
 </li>
   </ul></td>
@@ -319,7 +314,7 @@
   <hr/>
 
   <div role="contentinfo">
-    <p>&#169; Copyright 2023, MTKResearch.</p>
+    <p>&#169; Copyright 2023, MTK.</p>
   </div>
 
   Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a

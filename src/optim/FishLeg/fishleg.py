@@ -49,6 +49,19 @@ class FishLeg(Optimizer):
                 (default: (0.9, 0.999))
     :param float aux_eps: term added to the denominator to improve
                 numerical stability for auxiliary parameters (default: 1e-8)
+    :param int pre_aux_training: number of auxiliary updates to make before
+                any update of the original parameter. This process intends to approximate
+                the correct Fisher Information matrix during initialization,
+                which is espectially important for fine-tuning of models with pretraining
+    :param bool differentiable: whether the fused implementation (CUDA only) is used
+    :param float sgd_lr: help specify initial scale of the inverse Fisher Information matrix
+                approximation, :math:`\eta`. Make sure that 
+                
+                .. math::
+                        - \eta_{init} Q(\lambda) grad = - \eta_{sgd} grad
+
+                is hold in the beginning of the optimization. 
+                And here :math:`\eta_{init}=\eta_{sgd}/\eta_{fl}`.
 
     Example:
         >>> auxloader = torch.utils.data.DataLoader(train_data, shuffle=True, batch_size=100)
@@ -226,10 +239,10 @@ class FishLeg(Optimizer):
         for group in self.param_groups:
             name = group["name"]
 
-            grad = [p.grad.data/g2 for p in group["params"]]
-            qg = group["Qv"](grad)
+            grad_norm = [p.grad.data/g2 for p in group["params"]]
+            qg = group["Qv"](grad_norm)
 
-            for p, g, d_p, para_name in zip(group["params"], grad, qg, group["order"]):
+            for p, g, d_p, para_name in zip(group["params"], grad_norm, qg, group["order"]):
                 
                 self.plus_model._modules[name]._parameters[para_name] = p.data + d_p * self.eps
                 self.minus_model._modules[name]._parameters[para_name] = p.data - d_p * self.eps

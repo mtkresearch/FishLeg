@@ -19,7 +19,7 @@ class FishModule(nn.Module):
                 :math:`\eta`. Make sure that 
 
                 .. math::
-                        - \eta Q(\lambda) grad = - \eta_{adam} grad
+                        - \eta_{init} Q(\lambda) grad = - \eta_{sgd} grad
 
                 is hold in the beginning of the optimization
     :param List order: specify a name order of original parameter

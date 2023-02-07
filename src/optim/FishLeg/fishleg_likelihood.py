@@ -81,19 +81,19 @@ class FixedGaussianLikelihood(FishLikelihood):
                             standard deviation for each example.
 
     """
-    def __init__(self, sigma_fixed):
-        self.sigma_fixed = torch.as_tensor(sigma_fixed)
+    def __init__(self, sigma):
+        self.sigma = torch.as_tensor(sigma)
 
     @property
     def get_variance(self):
-        return self.sigma_fixed
+        return self.sigma
 
     def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
-        return 0.5 * (torch.square((observations - preds) / self.sigma_fixed).sum())/preds.shape[0] + \
-                    torch.log(self.sigma_fixed**2)
+        return 0.5 * (torch.square((observations - preds) / self.sigma).sum())/preds.shape[0] + \
+                    torch.log(self.sigma**2)
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
-        return preds + torch.normal(0, self.sigma_fixed, size=preds.shape)
+        return preds + torch.normal(0, self.sigma, size=preds.shape)
 
 
 class BernoulliLikelihood(FishLikelihood):
