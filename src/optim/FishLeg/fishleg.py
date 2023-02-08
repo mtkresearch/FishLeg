@@ -1,86 +1,79 @@
-from typing import Optional, Tuple, Callable
+from typing import Tuple, Callable
 import torch
 import torch.nn as nn
-from torch.nn import Parameter
 import copy
 from torch.optim import Optimizer, Adam
 from torch.optim.optimizer import _use_grad_for_differentiable
-from .utils import recursive_setattr, recursive_getattr
+from .utils import recursive_setattr, recursive_getattr, update_dict
 
 from .fishleg_layers import FishLinear
 
-def update_dict(replace: nn.Module, module: nn.Module) -> nn.Module:
-    replace_dict = replace.state_dict()
-    pretrained_dict = {
-        k: v for k, v in module.state_dict().items() if k in replace_dict
-    }
-    replace_dict.update(pretrained_dict)
-    replace.load_state_dict(replace_dict)
-    return replace
+__all__ = [
+    "FishLeg",
+]
+
 
 class FishLeg(Optimizer):
     r"""Implement FishLeg algorithm.
 
+    As described in ...
+
     :param torch.nn.Module model: a pytorch neural network module,
                 can be nested in a tree structure
     :param Callable[[nn.Module, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]] draw:
-                Sampling function that takes a model :math:`f` and input data :math:`\mathbf X`, 
-                and returns :math:`(\mathbf X, \mathbf y)`, 
-                where :math:`\mathbf y` is sampled from 
+                Sampling function that takes a model :math:`f` and input data :math:`\mathbf X`,
+                and returns :math:`(\mathbf X, \mathbf y)`,
+                where :math:`\mathbf y` is sampled from
                 the conditional distribution :math:`p(\mathbf y|f(\mathbf X))`
     :param Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor] nll:
                 A function that takes a model and data, and evaluate the negative
                 log-likelihood.
-    :param Callable[[int], Tuple[torch.Tensor, torch.Tensor]] dataloader:
-                A function that takes a batch size as input and output dataset 
+    :param torch.utiles.data.DataLoader aux_dataloader:
+                A function that takes a batch size as input and output dataset
                 with corresponding size.
-    :param float lr: learning rate,
+    :param float lr: Learning rate,
                 for the parameters of the input model using FishLeg (default: 1e-2)
-    :param float eps: a small scalar, to evaluate the auxiliary loss
+    :param float eps: A small scalar, to evaluate the auxiliary loss
                 in the direction of gradient of model parameters (default: 1e-4)
 
-    :param int update_aux_every: number of iteration after which an auxiliary
+    :param int update_aux_every: Number of iteration after which an auxiliary
                 update is executed, if negative, then run -update_aux_every auxiliary
                 updates in each outer iteration. (default: -3)
     :param float aux_lr: learning rate for the auxiliary parameters,
                 using Adam (default: 1e-3)
-    :param Tuple[float, float] aux_betas: coefficients used for computing
+    :param Tuple[float, float] aux_betas: Coefficients used for computing
                 running averages of gradient and its square for auxiliary parameters
                 (default: (0.9, 0.999))
-    :param float aux_eps: term added to the denominator to improve
+    :param float aux_eps: Term added to the denominator to improve
                 numerical stability for auxiliary parameters (default: 1e-8)
-    :param int pre_aux_training: number of auxiliary updates to make before
+    :param int pre_aux_training: Number of auxiliary updates to make before
                 any update of the original parameter. This process intends to approximate
                 the correct Fisher Information matrix during initialization,
                 which is espectially important for fine-tuning of models with pretraining
-    :param bool differentiable: whether the fused implementation (CUDA only) is used
-    :param float sgd_lr: help specify initial scale of the inverse Fisher Information matrix
-                approximation, :math:`\eta`. Make sure that 
-                
+    :param bool differentiable: Whether the fused implementation (CUDA only) is used
+    :param float sgd_lr: Help specify initial scale of the inverse Fisher Information matrix
+                approximation, :math:`\eta`. Make sure that
+
                 .. math::
                         - \eta_{init} Q(\lambda) grad = - \eta_{sgd} grad
 
-                is hold in the beginning of the optimization. 
+                is hold in the beginning of the optimization.
                 And here :math:`\eta_{init}=\eta_{sgd}/\eta_{fl}`.
+    :param str device: The device where calculations will be performed using PyTorch Tensors.
 
     Example:
-        >>> auxloader = torch.utils.data.DataLoader(train_data, shuffle=True, batch_size=100)
-        >>> trainloader = torch.utils.data.DataLoader(train_data, shuffle=True, batch_size=100)
+        >>> aux_loader = torch.utils.data.DataLoader(train_data, shuffle=True, batch_size=100)
+        >>> train_loader = torch.utils.data.DataLoader(train_data, shuffle=True, batch_size=100)
         >>>
-        >>> likelihood = FixedGaussianLikelihood(sigma_fixed=1.0)
+        >>> likelihood = FixedGaussianLikelihood(sigma=1.0)
         >>>
-        >>> def nll(model, data):
-        >>>     data_x, data_y = data
+        >>> def nll(model, data_x, data_y):
         >>>     pred_y = model.forward(data_x)
         >>>     return likelihood.nll(data_y, pred_y)
         >>>
         >>> def draw(model, data_x):
         >>>     pred_y = model.forward(data_x)
-        >>>     return (data_x, likelihood.draw(pred_y))
-        >>>
-        >>> def dataloader():
-        >>>     data_x, _ = next(iter(auxloader))
-        >>>     return data_x
+        >>>     return likelihood.draw(pred_y)
         >>>
         >>> model = nn.Sequential(
         >>>     nn.Linear(2, 5),
@@ -92,11 +85,10 @@ class FishLeg(Optimizer):
         >>>     model,
         >>>     draw,
         >>>     nll,
-        >>>     dataloader
+        >>>     aux_loader
         >>> )
         >>>
-        >>> for iteration in range(100):
-        >>>     data_x, data_y = next(iter(trainloader))
+        >>> for data_x, data_y in dataloader:
         >>>     opt.zero_grad()
         >>>     pred_y = model(data_x)
         >>>     loss = nn.MSELoss()(data_y, pred_y)
@@ -104,7 +96,7 @@ class FishLeg(Optimizer):
         >>>     opt.step()
         >>>     if iteration % 10 == 0:
         >>>         print(loss.detach())
-    
+
     """
 
     def __init__(
@@ -112,7 +104,7 @@ class FishLeg(Optimizer):
         model: nn.Module,
         draw: Callable[[nn.Module, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
         nll: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
-        dataloader: Callable[[], Tuple[torch.Tensor, torch.Tensor]],
+        aux_dataloader: torch.utils.data.DataLoader,
         lr: float = 1e-2,
         eps: float = 1e-4,
         weight_decay: float = 1e-5,
@@ -124,20 +116,21 @@ class FishLeg(Optimizer):
         damping: float = 1e-5,
         pre_aux_training: int = 10,
         differentiable: bool = False,
-        sgd_lr : float = 1e-2
-
+        sgd_lr: float = 1e-2,
+        device: str = "cpu",
     ) -> None:
         self.model = model
         self.plus_model = copy.deepcopy(self.model)
         self.minus_model = copy.deepcopy(self.model)
         self.sgd_lr = sgd_lr
         self.lr = lr
-        
-        self.model = self.init_model_aux(model)
+        self.device = device
+
+        self.model = self.init_model_aux(model).to(device)
 
         self.draw = draw
         self.nll = nll
-        self.dataloader = dataloader
+        self.aux_dataloader = aux_dataloader
 
         # partition by modules
         self.aux_param = [
@@ -157,7 +150,9 @@ class FishLeg(Optimizer):
                 }
                 g = {
                     "params": [params[name] for name in module.order],
-                    "gradbar": [torch.zeros_like(params[name]) for name in module.order],
+                    "gradbar": [
+                        torch.zeros_like(params[name]) for name in module.order
+                    ],
                     "Qv": module.Qv,
                     "order": module.order,
                     "name": module_name,
@@ -167,7 +162,13 @@ class FishLeg(Optimizer):
         defaults = dict(lr=lr, differentiable=differentiable)
 
         super(FishLeg, self).__init__(param_groups, defaults)
-        self.aux_opt = Adam(self.aux_param, lr=aux_lr, betas=aux_betas, eps=aux_eps, weight_decay=weight_decay)
+        self.aux_opt = Adam(
+            self.aux_param,
+            lr=aux_lr,
+            betas=aux_betas,
+            eps=aux_eps,
+            weight_decay=weight_decay,
+        )
         self.eps = eps
         self.update_aux_every = update_aux_every
         self.aux_lr = aux_lr
@@ -178,7 +179,6 @@ class FishLeg(Optimizer):
         self.beta = beta
         self.pre_aux_training = pre_aux_training
         self.step_t = 0
-        
 
     def init_model_aux(self, model: nn.Module) -> nn.Module:
         """Given a model to optimize, parameters can be devided to
@@ -200,8 +200,11 @@ class FishLeg(Optimizer):
             try:
                 if isinstance(module, nn.Linear):
                     replace = FishLinear(
-                        module.in_features, module.out_features, module.bias is not None,
-                        init_scale=self.sgd_lr/self.lr
+                        module.in_features,
+                        module.out_features,
+                        module.bias is not None,
+                        init_scale=self.sgd_lr / self.lr,
+                        device=self.device,
                     )
                     replace = update_dict(replace, module)
                     recursive_setattr(model, name, replace)
@@ -223,51 +226,54 @@ class FishLeg(Optimizer):
         where :math:`\\theta` is the parameters of model, :math:`\lambda` is the
         auxliarary parameters.
         """
-        data_x = self.dataloader()
+        data_x, _ = next(iter(self.aux_dataloader))
+        data_x.to(self.device)
 
         self.aux_opt.zero_grad()
         with torch.no_grad():
-            data = self.draw(self.model, data_x)
+            pred = self.draw(self.model, data_x)
             g2 = 0.0
             for group in self.param_groups:
-                for p in group['params']:
-                    g2 += p.grad.data.norm(p=2)**2
+                for p in group["params"]:
+                    g2 += p.grad.data.norm(p=2) ** 2
             g2 = torch.sqrt(g2)
-        
-        
+
         aux_loss = 0.0
         for group in self.param_groups:
             name = group["name"]
 
-            grad_norm = [p.grad.data/g2 for p in group["params"]]
+            grad_norm = [p.grad.data / g2 for p in group["params"]]
             qg = group["Qv"](grad_norm)
 
-            for p, g, d_p, para_name in zip(group["params"], grad_norm, qg, group["order"]):
-                
-                self.plus_model._modules[name]._parameters[para_name] = p.data + d_p * self.eps
-                self.minus_model._modules[name]._parameters[para_name] = p.data - d_p * self.eps
-                
-                aux_loss -=  2 * torch.sum(g * d_p)
-                aux_loss += self.damping * d_p.norm(p=2)**2
-        
+            for p, g, d_p, para_name in zip(
+                group["params"], grad_norm, qg, group["order"]
+            ):
 
-        h_plus = self.nll(self.plus_model, data)
-        h_minus = self.nll(self.minus_model, data)
+                self.plus_model._modules[name]._parameters[para_name] = (
+                    p.data + d_p * self.eps
+                )
+                self.minus_model._modules[name]._parameters[para_name] = (
+                    p.data - d_p * self.eps
+                )
+
+                aux_loss -= 2 * torch.sum(g * d_p)
+                aux_loss += self.damping * d_p.norm(p=2) ** 2
+
+        h_plus = self.nll(self.plus_model, data_x, pred)
+        h_minus = self.nll(self.minus_model, data_x, pred)
 
         aux_loss += (h_plus + h_minus) / (self.eps**2)
         aux_loss.backward()
-        
-        self.aux_opt.step()
-        
 
-    
+        self.aux_opt.step()
+
     def step(self) -> None:
         """Performes a single optimization step of FishLeg."""
 
         if self.step_t == 0:
             for _ in range(self.pre_aux_training):
                 self.update_aux()
-        
+
         if self.update_aux_every > 0:
             if self.step_t % self.update_aux_every == 0:
                 self.update_aux()
@@ -276,7 +282,7 @@ class FishLeg(Optimizer):
                 self.update_aux()
 
         self.step_t += 1
-        
+
         @_use_grad_for_differentiable
         def helper_step(self):
             for group in self.param_groups:
@@ -286,11 +292,8 @@ class FishLeg(Optimizer):
                 nat_grad = group["Qv"](grad)
 
                 for p, d_p, gbar in zip(group["params"], nat_grad, group["gradbar"]):
-                    gbar.add_(d_p, alpha=(1.-self.beta)/self.beta).mul_(self.beta)
+                    gbar.add_(d_p, alpha=(1.0 - self.beta) / self.beta).mul_(self.beta)
                     delta = gbar.add(p, alpha=self.weight_decay)
                     p.add_(delta, alpha=-lr)
-            
+
         helper_step(self)
-
-
-

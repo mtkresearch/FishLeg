@@ -8,13 +8,15 @@ import urllib.request
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import torch.optim as optim
+from torch.utils.data import Dataset
 import math
 
 torch.set_default_dtype(torch.float32)
 
-from optim.FishLeg import FishLeg, FixedGaussianLikelihood, BernoulliLikelihood
+from optim.FishLeg import FishLeg, FISH_LIKELIHOODS
 
-def dense_to_one_hot(y, max_value=9,min_value=0):
+
+def dense_to_one_hot(y, max_value=9, min_value=0):
     """
     converts y into one hot reprsentation.
     Parameters
@@ -28,7 +30,8 @@ def dense_to_one_hot(y, max_value=9,min_value=0):
     """
     length = len(y)
     one_hot = jnp.zeros((length, (max_value - min_value + 1)))
-    return  one_hot.at[list(range(length)), y].set(1)
+    return one_hot.at[list(range(length)), y].set(1)
+
 
 def maybe_download(SOURCE_URL, filename, work_directory):
     """Download the data from Yann's website, unless it's already here."""
@@ -38,23 +41,25 @@ def maybe_download(SOURCE_URL, filename, work_directory):
     if not os.path.exists(filepath):
         filepath, _ = urllib.request.urlretrieve(SOURCE_URL + filename, filepath)
         statinfo = os.stat(filepath)
-        print('Succesfully downloaded', filename, statinfo.st_size, 'bytes.')
+        print("Succesfully downloaded", filename, statinfo.st_size, "bytes.")
     return filepath
 
-class ImageDataSet(object):
+
+class ImageDataSet(Dataset):
     def __init__(self, images, labels, if_autoencoder, input_reshape):
         self._num_examples = len(images)
-        if len(images)>0:
-            if input_reshape == 'fully-connected':
+        if len(images) > 0:
+            if input_reshape == "fully-connected":
                 images = np.swapaxes(images, 2, 3)
                 images = np.swapaxes(images, 1, 2)
-                images = images.reshape(images.shape[0],
-                                    images.shape[1] * images.shape[2] * images.shape[3])
+                images = images.reshape(
+                    images.shape[0], images.shape[1] * images.shape[2] * images.shape[3]
+                )
             images = images.astype(np.float32)
             if if_autoencoder:
                 labels = images
         self._images = images
-        self._labels = labels            
+        self._labels = labels
         self._epochs_completed = 0
         self._index_in_epoch = 0
 
@@ -97,36 +102,48 @@ class ImageDataSet(object):
             self._index_in_epoch = batch_size
             assert batch_size <= self._num_examples
         end = self._index_in_epoch
-        return torch.from_numpy(self._images[start:end]).to(torch.float32), \
-                torch.from_numpy(self._labels[start:end]).to(torch.float32)
+        return torch.from_numpy(self._images[start:end]).to(
+            torch.float32
+        ), torch.from_numpy(self._labels[start:end]).to(torch.float32)
 
-    
     @property
     def batch_size(self):
         return self._batch_size
-    
+
     @property
     def length(self):
         return self._num_examples
-    
+
     @property
     def data(self):
         return self._images
 
+    def __len__(self):
+        return self._num_examples
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        return torch.tensor(self._images[idx]).to(device), torch.tensor(
+            self._labels[idx]
+        ).to(device)
+
+
 def _read32(bytestream):
-    dt = np.dtype(np.uint32).newbyteorder('>')
+    dt = np.dtype(np.uint32).newbyteorder(">")
     return np.frombuffer(bytestream.read(4), dtype=dt)[0]
 
 
 def extract_images(filename):
     """Extract the images into a 4D uint8 numpy array [index, y, x, depth]."""
-    print('Extracting', filename)
+    print("Extracting", filename)
     with gzip.open(filename) as bytestream:
         magic = _read32(bytestream)
         if magic != 2051:
             raise ValueError(
-                'Invalid magic number %d in MNIST image file: %s' %
-                (magic, filename))
+                "Invalid magic number %d in MNIST image file: %s" % (magic, filename)
+            )
         num_images = _read32(bytestream)
         rows = _read32(bytestream)
         cols = _read32(bytestream)
@@ -135,82 +152,85 @@ def extract_images(filename):
         data = data.reshape(num_images, rows, cols, 1)
         return data
 
-    
+
 def extract_labels(filename, one_hot=False):
     """Extract the labels into a 1D uint8 numpy array [index]."""
-    print('Extracting', filename)
+    print("Extracting", filename)
     with gzip.open(filename) as bytestream:
         magic = _read32(bytestream)
         if magic != 2049:
             raise ValueError(
-                'Invalid magic number %d in MNIST label file: %s' %
-                (magic, filename))
+                "Invalid magic number %d in MNIST label file: %s" % (magic, filename)
+            )
         num_items = _read32(bytestream)
         buf = bytestream.read(num_items)
         labels = np.frombuffer(buf, dtype=np.uint8)
         if one_hot:
             return dense_to_one_hot(labels)
-        return 
+        return
 
-def read_data_sets(name_dataset, home_path, if_autoencoder = True):
+
+def read_data_sets(name_dataset, home_path, if_autoencoder=True):
     """A helper utitlity that returns ImageDataset.
     If the data are not present in the home_path they are
-    downloaded from the appropriate site. 
-    
+    downloaded from the appropriate site.
+
     * Input*
     name_dataset: MNIST, FACES or CURVES
     home_path:    The root folder to look for or download the dataset.
     batch_size:   Batch size.
-    
+
     *Returns*:
     An ImageDataset class object that implements get_batch().
     """
+
     class DataSets(object):
         pass
-    data_sets = DataSets()
-    
-    VALIDATION_SIZE = 0
-    train_dir = os.path.join(home_path, 'data', name_dataset + '_data')
 
-    print(f'Begin loading data for {name_dataset}')
-    if name_dataset == 'MNIST':
+    data_sets = DataSets()
+
+    VALIDATION_SIZE = 0
+    train_dir = os.path.join(home_path, "data", name_dataset + "_data")
+
+    print(f"Begin loading data for {name_dataset}")
+    if name_dataset == "MNIST":
         if_autoencoder = if_autoencoder
-        
-        
-        SOURCE_URL = 'http://yann.lecun.com/exdb/mnist/'
-        TRAIN_IMAGES = 'train-images-idx3-ubyte.gz'
-        TEST_IMAGES = 't10k-images-idx3-ubyte.gz'
-        TRAIN_LABELS = 'train-labels-idx1-ubyte.gz'
-        TEST_LABELS = 't10k-labels-idx1-ubyte.gz'
-    
+
+        SOURCE_URL = "http://yann.lecun.com/exdb/mnist/"
+        TRAIN_IMAGES = "train-images-idx3-ubyte.gz"
+        TEST_IMAGES = "t10k-images-idx3-ubyte.gz"
+        TRAIN_LABELS = "train-labels-idx1-ubyte.gz"
+        TEST_LABELS = "t10k-labels-idx1-ubyte.gz"
+
         local_file = maybe_download(SOURCE_URL, TRAIN_IMAGES, train_dir)
-        print(f'Data read from {local_file}')
+        print(f"Data read from {local_file}")
         train_images = extract_images(local_file)
 
         local_file = maybe_download(SOURCE_URL, TEST_IMAGES, train_dir)
         test_images = extract_images(local_file)
-        
+
         local_file = maybe_download(SOURCE_URL, TRAIN_LABELS, train_dir)
-        print(f'Data read from {local_file}')
-        train_labels = extract_labels(local_file,one_hot=True)
+        print(f"Data read from {local_file}")
+        train_labels = extract_labels(local_file, one_hot=True)
 
         local_file = maybe_download(SOURCE_URL, TEST_LABELS, train_dir)
-        test_labels = extract_labels(local_file,one_hot=True)
+        test_labels = extract_labels(local_file, one_hot=True)
 
         # see "Reducing the Dimensionality of Data with Neural Networks"
         train_images = np.multiply(train_images, 1.0 / 255.0)
         test_images = np.multiply(test_images, 1.0 / 255.0)
-    elif name_dataset == 'FACES':
+    elif name_dataset == "FACES":
         if_autoencoder = if_autoencoder
-        
-        SOURCE_URL = 'http://www.cs.toronto.edu/~jmartens/'
-        TRAIN_IMAGES = 'newfaces_rot_single.mat'
-        
+
+        SOURCE_URL = "http://www.cs.toronto.edu/~jmartens/"
+        TRAIN_IMAGES = "newfaces_rot_single.mat"
+
         local_file = maybe_download(SOURCE_URL, TRAIN_IMAGES, train_dir)
-        print(f'Data read from {local_file}')
+        print(f"Data read from {local_file}")
         import mat4py
+
         images_ = mat4py.loadmat(local_file)
-        images_ = np.asarray(images_['newfaces_single'])
+        images_ = np.asarray(images_["newfaces_single"])
         images_ = np.transpose(images_)
 
         train_images = images_[:103500]
@@ -218,24 +238,31 @@ def read_data_sets(name_dataset, home_path, if_autoencoder = True):
 
         train_images = train_images[:, :, np.newaxis, np.newaxis]
         test_images = test_images[:, :, np.newaxis, np.newaxis]
-        
+
         train_labels = train_images
-        test_labels = test_images  
-        
+        test_labels = test_images
+
     validation_images = train_images[:VALIDATION_SIZE]
     validation_labels = train_labels[:VALIDATION_SIZE]
-    
+
     train_images = train_images[VALIDATION_SIZE:]
     train_labels = train_labels[VALIDATION_SIZE:]
 
-    input_reshape = 'fully-connected'
-    
-    data_sets.train = ImageDataSet(train_images, train_labels, if_autoencoder, input_reshape)
-    data_sets.validation = ImageDataSet(validation_images, validation_labels, if_autoencoder, input_reshape)
-    data_sets.test = ImageDataSet(test_images, test_labels, if_autoencoder, input_reshape)
+    input_reshape = "fully-connected"
 
-    print(f'Succesfull loaded {name_dataset} dataset.')    
+    data_sets.train = ImageDataSet(
+        train_images, train_labels, if_autoencoder, input_reshape
+    )
+    data_sets.validation = ImageDataSet(
+        validation_images, validation_labels, if_autoencoder, input_reshape
+    )
+    data_sets.test = ImageDataSet(
+        test_images, test_labels, if_autoencoder, input_reshape
+    )
+
+    print(f"Succesfully loaded {name_dataset} dataset.")
     return data_sets
+
 
 if __name__ == "__main__":
 
@@ -262,140 +289,168 @@ if __name__ == "__main__":
     eps = 1e-4
 
     ## Dataset
-    dataset = read_data_sets('FACES', '../data/', if_autoencoder=True)
-    input_dist = dataset.train
-    aux_dist = dataset.train
+    dataset = read_data_sets("FACES", "../data/", if_autoencoder=True)
+    train_dataset = dataset.train
+    test_dataset = dataset.test
 
-    test_dist = dataset.test
-    D_test = test_dist.sample(10000)
-    class_data = dataset.train.images
-    
-    likelihood = FixedGaussianLikelihood(sigma_fixed=1.0)
+    likelihood = FISH_LIKELIHOODS["FixedGaussian".lower()](sigma=1.0, device=device)
 
-    def nll(model, data):
-        data_x, data_y = data
+    def nll(model, data_x, data_y):
         pred_y = model.forward(data_x)
         return likelihood.nll(data_y, pred_y)
 
     def draw(model, data_x):
         pred_y = model.forward(data_x)
-        return (data_x, likelihood.draw(pred_y))
+        return likelihood.draw(pred_y)
 
-    def dataloader():
-        data_x, _ = aux_dist.sample(batch_size)
-        return data_x
-    
-    
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True
+    )
+    aux_loader = torch.utils.data.DataLoader(
+        train_dataset, shuffle=True, batch_size=batch_size
+    )
+
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=batch_size, shuffle=False
+    )
+
     model = nn.Sequential(
-            nn.Linear(625, 2000, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(2000, 1000, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(1000, 500, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(500, 30, dtype=torch.float32),
-            nn.Linear(30, 500, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(500, 1000, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(1000, 2000, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(2000, 625, dtype=torch.float32)
-        )
+        nn.Linear(625, 2000, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(2000, 1000, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(1000, 500, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(500, 30, dtype=torch.float32),
+        nn.Linear(30, 500, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(500, 1000, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(1000, 2000, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(2000, 625, dtype=torch.float32),
+    )
 
     print("lr fl={}, lr sgd={}".format(eta_fl, eta_sgd))
 
     opt = FishLeg(
-                model,
-                draw,
-                nll,
-                dataloader,
-                lr=eta_fl,
-                eps=eps,
-                beta=beta,
-                weight_decay=1e-5,
-                update_aux_every=10,
-                aux_lr=aux_eta,
-                aux_betas=(0.9, 0.999),
-                aux_eps=1e-8,
-                damping=damping,
-                pre_aux_training=25,
-                sgd_lr=eta_sgd
-            )
-    
+        model,
+        draw,
+        nll,
+        aux_loader,
+        lr=eta_fl,
+        eps=eps,
+        beta=beta,
+        weight_decay=1e-5,
+        update_aux_every=10,
+        aux_lr=aux_eta,
+        aux_betas=(0.9, 0.999),
+        aux_eps=1e-8,
+        damping=damping,
+        pre_aux_training=25,
+        sgd_lr=eta_sgd,
+        device=device,
+    )
+
     FL_time = []
     LOSS = []
     TEST_LOSS = []
     st = time.time()
 
-    for e in range(1, epochs+1):
+    for e in range(1, epochs + 1):
         print("######## EPOCH", e)
-        for t, j in enumerate(range(0, len(class_data), batch_size)):    
-            D = input_dist.sample(batch_size)
+        for n, (batch_data, batch_labels) in enumerate(train_loader):
+            batch_data.to(device)
+            batch_labels.to(device)
             opt.zero_grad()
-            loss = nll(opt.model, D)
+            loss = nll(opt.model, batch_data, batch_labels)
             loss.backward()
             opt.step()
-            if t % 50 == 0:
-                FL_time.append(time.time() - st)
-                LOSS.append(loss.detach().numpy())
-                test_loss = nll(opt.model, D_test).detach().numpy()
-                TEST_LOSS.append(test_loss)
 
-                print(t, loss.detach().numpy(), test_loss)
-                
-    
-    plt.plot(FL_time, LOSS, label='eps={}'.format(eps)) #color=colors_group[i])
-    plt.plot(FL_time, TEST_LOSS, label='eps={} test'.format(eps)) #linestyle='--', color=colors_group[i])
-    
-    
+            if n % 50 == 0:
+                FL_time.append(time.time() - st)
+                LOSS.append(loss.detach().cpu().numpy())
+                test_loss = 0
+                for m, (test_batch_data, test_batch_labels) in enumerate(test_loader):
+                    test_batch_data.to(device), test_batch_labels.to(device)
+                    test_loss += (
+                        nll(opt.model, test_batch_data, test_batch_labels)
+                        .detach()
+                        .cpu()
+                        .numpy()
+                    )
+                    if m == 10:
+                        break
+
+                TEST_LOSS.append(test_loss / m)
+
+                print(n, LOSS[-1], TEST_LOSS[-1])
+
+    plt.plot(FL_time, LOSS, label="eps={}".format(eps))  # color=colors_group[i])
+    plt.plot(
+        FL_time, TEST_LOSS, label="eps={} test".format(eps)
+    )  # linestyle='--', color=colors_group[i])
+
     model = nn.Sequential(
-            nn.Linear(625, 2000, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(2000, 1000, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(1000, 500, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(500, 30, dtype=torch.float32),
-            nn.Linear(30, 500, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(500, 1000, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(1000, 2000, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(2000, 625, dtype=torch.float32)
-        )
+        nn.Linear(625, 2000, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(2000, 1000, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(1000, 500, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(500, 30, dtype=torch.float32),
+        nn.Linear(30, 500, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(500, 1000, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(1000, 2000, dtype=torch.float32),
+        nn.ReLU(),
+        nn.Linear(2000, 625, dtype=torch.float32),
+    ).to(device)
 
-    opt = optim.Adam(model.parameters(), 
-                    lr=eta_adam, 
-                    betas=(0.9, 0.999), 
-                    weight_decay=weight_decay,
-                    eps=1e-8)
+    opt = optim.Adam(
+        model.parameters(),
+        lr=eta_adam,
+        betas=(0.9, 0.999),
+        weight_decay=weight_decay,
+        eps=1e-8,
+    )
 
     FL_time = []
     LOSS = []
     TEST_LOSS = []
     st = time.time()
-    for e in range(1, epochs+1):
+    for e in range(1, epochs + 1):
         print("######## EPOCH", e)
-        for t, j in enumerate(range(0, len(class_data), batch_size)):    
-            D = input_dist.sample(batch_size)
+        for n, (batch_data, batch_labels) in enumerate(train_loader):
+            batch_data.to(device), batch_labels.to(device)
             opt.zero_grad()
-            loss = nll(model, D)
+            loss = nll(model, batch_data, batch_labels)
             loss.backward()
             opt.step()
-            
-            if t % 50 == 0:
+
+            if n % 50 == 0:
                 FL_time.append(time.time() - st)
-                LOSS.append(loss.detach().numpy())
-                test_loss = nll(model, D_test).detach().numpy()
-                TEST_LOSS.append(test_loss)
+                LOSS.append(loss.detach().cpu().numpy())
+                test_loss = 0
+                for m, (test_batch_data, test_batch_labels) in enumerate(test_loader):
+                    test_batch_data.to(device), test_batch_labels.to(device)
+                    test_loss += (
+                        nll(model, test_batch_data, test_batch_labels)
+                        .detach()
+                        .cpu()
+                        .numpy()
+                    )
+                    if m == 10:
+                        break
 
-                print(t, loss.detach().numpy(), test_loss)
+                TEST_LOSS.append(test_loss / m)
 
-    plt.plot(FL_time, LOSS, label='Adam', color='blue')
-    plt.plot(FL_time, TEST_LOSS, label='Adam_test', linestyle='--', color='blue')
-    
+                print(n, LOSS[-1], TEST_LOSS[-1])
+
+    plt.plot(FL_time, LOSS, label="Adam", color="blue")
+    plt.plot(FL_time, TEST_LOSS, label="Adam_test", linestyle="--", color="blue")
+
     plt.legend()
 
     plt.savefig("result/result.png", dpi=300)

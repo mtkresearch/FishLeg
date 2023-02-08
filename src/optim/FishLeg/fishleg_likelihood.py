@@ -1,13 +1,18 @@
 import torch
 from torch.distributions.categorical import Categorical
-from torch.distributions.bernoulli import  Bernoulli
-from torch.distributions.normal import Normal
+from torch.distributions.bernoulli import Bernoulli
 from torch.nn.functional import one_hot, log_softmax
 
 from abc import abstractmethod
 
-#####
-# TODO: Add an abstract syntax class here for users to be able to create their own custom likelihoods.
+__all__ = [
+    "FishLikelihood",
+    "FixedGaussianLikelihood",
+    "BernoulliLikelihood",
+    "SoftMaxLikelihood",
+]
+
+
 class FishLikelihood:
     r"""
     A Likelihood in FishLeg specifies a probablistic modeling, which attributes
@@ -30,18 +35,14 @@ class FishLikelihood:
             \end{cases}
     
     """
-    def __init__(self):
+
+    def __init__(self) -> None:
         pass
 
     @abstractmethod
-    def nll(
-        self, 
-        observations, 
-        preds, 
-        **kwargs
-    ):
+    def nll(self, observations, preds, **kwargs):
         r"""
-        Computes the negative log-likelihood 
+        Computes the negative log-likelihood
         :math:`\ell(\theta, \mathcal D)=-\log p(\mathbf y|f(\mathbf x))`
 
         :param `torch.Tensor` observations: Values of :math:`y`.
@@ -50,15 +51,10 @@ class FishLikelihood:
         """
         raise NotImplementedError
 
-
     @abstractmethod
-    def draw(
-        self,
-        preds,
-        **kwargs
-    ):
+    def draw(self, preds, **kwargs):
         r"""
-        Draw samples from the conditional distribution 
+        Draw samples from the conditional distribution
         :math:`p(\mathbf y|f(\mathbf x))`
 
         :param `torch.Tensor` preds: Predictions from model :math:`f(\mathbf x)`
@@ -66,39 +62,39 @@ class FishLikelihood:
         raise NotImplementedError
 
 
-#####
-
-# Note, need to check that the recuction of the nll is correct, default reducation is mean
 class FixedGaussianLikelihood(FishLikelihood):
     """
-    The standard likelihood for regression, 
-    but assuming fixed heteroscedastic noise. 
-    
+    The standard likelihood for regression,
+    but assuming fixed heteroscedastic noise.
+
     .. math::
         p(y | f(x)) = f(x) + \epsilon, \:\:\:\: \epsilon \sim N(0,\sigma^{2})
 
-    :param `torch.Tensor` sigma_fixed: Known observation 
+    :param `torch.Tensor` sigma: Known observation
                             standard deviation for each example.
 
     """
-    def __init__(self, sigma):
+
+    def __init__(self, sigma: torch.Tensor, device: str = "cpu") -> None:
         self.sigma = torch.as_tensor(sigma)
+        self.device = device
 
     @property
-    def get_variance(self):
+    def get_variance(self) -> torch.Tensor:
         return self.sigma
 
     def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
-        return 0.5 * (torch.square((observations - preds) / self.sigma).sum())/preds.shape[0] + \
-                    torch.log(self.sigma**2)
+        return 0.5 * (
+            torch.square((observations - preds) / self.sigma).sum()
+        ) / preds.shape[0] + torch.log(self.sigma**2).to(self.device)
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
-        return preds + torch.normal(0, self.sigma, size=preds.shape)
+        return preds + torch.normal(0, self.sigma, size=preds.shape).to(self.device)
 
 
 class BernoulliLikelihood(FishLikelihood):
     r"""
-    The Bernoulli likelihood used for classification. 
+    The Bernoulli likelihood used for classification.
     Using the standard Normal CDF :math:`\Phi(x)`) and the identity
     :math:`\Phi(-x) = 1-\Phi(x)`, we can write the likelihood as:
 
@@ -106,24 +102,27 @@ class BernoulliLikelihood(FishLikelihood):
         p(y|f(x))=\Phi(yf(x))
 
     """
-    def __init__(self):
+
+    def __init__(self) -> None:
         pass
 
-
     def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
-        #max_val = torch.clip(torch.max(-preds), 0, None)
-        #result = torch.sum(preds *(1.0- observations) + max_val + torch.log(torch.exp(-max_val) \
-        #              + torch.exp((-preds - max_val))))/preds.shape[0]
 
-        result = -torch.sum(torch.log(1-preds + 1e-5)*(1.-observations) + torch.log(preds + 1e-5)*observations)/preds.shape[0]
+        result = (
+            -torch.sum(
+                torch.log(1 - preds + 1e-5) * (1.0 - observations)
+                + torch.log(preds + 1e-5) * observations
+            )
+            / preds.shape[0]
+        )
         return result
-        
+
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
         return Bernoulli(probs=preds).sample()
 
 
 class SoftMaxLikelihood(FishLikelihood):
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     def nll(sef, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
