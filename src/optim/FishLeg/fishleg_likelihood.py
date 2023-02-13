@@ -76,8 +76,8 @@ class FixedGaussianLikelihood(FishLikelihood):
     """
 
     def __init__(self, sigma: torch.Tensor, device: str = "cpu") -> None:
-        self.sigma = torch.as_tensor(sigma)
         self.device = device
+        self.sigma = torch.as_tensor(sigma).to(self.device)
 
     @property
     def get_variance(self) -> torch.Tensor:
@@ -86,10 +86,10 @@ class FixedGaussianLikelihood(FishLikelihood):
     def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
         return 0.5 * (
             torch.square((observations - preds) / self.sigma).sum()
-        ) / preds.shape[0] + torch.log(self.sigma**2).to(self.device)
+        ) / preds.shape[0] + torch.log(self.sigma**2)
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
-        return preds + torch.normal(0, self.sigma, size=preds.shape).to(self.device)
+        return preds + torch.normal(0, self.sigma, size=preds.shape)
 
 
 class BernoulliLikelihood(FishLikelihood):
