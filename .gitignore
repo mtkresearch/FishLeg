@@ -134,3 +134,6 @@ dmypy.json
 *.DS_Store
 
 *.ipynb
+
+src/optim/sphinx
+data/

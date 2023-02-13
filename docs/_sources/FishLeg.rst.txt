@@ -1,0 +1,45 @@
+FishLeg package
+===============
+
+Submodules
+----------
+
+FishLeg.fishleg module
+----------------------
+
+.. automodule:: FishLeg.fishleg
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+FishLeg.fishleg\_layers module
+------------------------------
+
+.. automodule:: FishLeg.fishleg_layers
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+FishLeg.fishleg\_likelihood module
+----------------------------------
+
+.. automodule:: FishLeg.fishleg_likelihood
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+FishLeg.utils module
+--------------------
+
+.. automodule:: FishLeg.utils
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: FishLeg
+   :members:
+   :undoc-members:
+   :show-inheritance:
