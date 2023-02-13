@@ -89,7 +89,7 @@ class FixedGaussianLikelihood(FishLikelihood):
         ) / preds.shape[0] + torch.log(self.sigma**2)
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
-        return preds + torch.normal(0, self.sigma, size=preds.shape)
+        return preds + torch.normal(0, self.sigma, size=preds.shape).to(self.device)
 
 
 class BernoulliLikelihood(FishLikelihood):
@@ -103,8 +103,8 @@ class BernoulliLikelihood(FishLikelihood):
 
     """
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self, device: str = "cpu") -> None:
+        self.device = device
 
     def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
 
@@ -122,8 +122,8 @@ class BernoulliLikelihood(FishLikelihood):
 
 
 class SoftMaxLikelihood(FishLikelihood):
-    def __init__(self) -> None:
-        pass
+    def __init__(self, device: str = "cpu") -> None:
+        self.device = device
 
     def nll(sef, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
         logits = log_softmax(preds, dim=1)

@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import torch.optim as optim
 from torch.utils.data import Dataset
-import math
+import copy
 
 torch.set_default_dtype(torch.float32)
 
@@ -278,7 +278,7 @@ if __name__ == "__main__":
 
     ## Hyperparams
     batch_size = 100
-    epochs = 10
+    epochs = 1
     eta_adam = 1e-4
     eta_fl = 5e-2
     eta_sgd = 1e-2
@@ -329,7 +329,9 @@ if __name__ == "__main__":
         nn.Linear(1000, 2000, dtype=torch.float32),
         nn.ReLU(),
         nn.Linear(2000, 625, dtype=torch.float32),
-    )
+    ).to(device)
+
+    model_adam = copy.deepcopy(model)
 
     print("lr fl={}, lr sgd={}".format(eta_fl, eta_sgd))
 
@@ -360,8 +362,7 @@ if __name__ == "__main__":
     for e in range(1, epochs + 1):
         print("######## EPOCH", e)
         for n, (batch_data, batch_labels) in enumerate(train_loader):
-            batch_data.to(device)
-            batch_labels.to(device)
+            batch_data.to(device), batch_labels.to(device)
             opt.zero_grad()
             loss = nll(opt.model, batch_data, batch_labels)
             loss.backward()
@@ -391,25 +392,8 @@ if __name__ == "__main__":
         FL_time, TEST_LOSS, label="eps={} test".format(eps)
     )  # linestyle='--', color=colors_group[i])
 
-    model = nn.Sequential(
-        nn.Linear(625, 2000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(2000, 1000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(1000, 500, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(500, 30, dtype=torch.float32),
-        nn.Linear(30, 500, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(500, 1000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(1000, 2000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(2000, 625, dtype=torch.float32),
-    ).to(device)
-
     opt = optim.Adam(
-        model.parameters(),
+        model_adam.parameters(),
         lr=eta_adam,
         betas=(0.9, 0.999),
         weight_decay=weight_decay,
@@ -425,7 +409,7 @@ if __name__ == "__main__":
         for n, (batch_data, batch_labels) in enumerate(train_loader):
             batch_data.to(device), batch_labels.to(device)
             opt.zero_grad()
-            loss = nll(model, batch_data, batch_labels)
+            loss = nll(model_adam, batch_data, batch_labels)
             loss.backward()
             opt.step()
 
@@ -436,7 +420,7 @@ if __name__ == "__main__":
                 for m, (test_batch_data, test_batch_labels) in enumerate(test_loader):
                     test_batch_data.to(device), test_batch_labels.to(device)
                     test_loss += (
-                        nll(model, test_batch_data, test_batch_labels)
+                        nll(model_adam, test_batch_data, test_batch_labels)
                         .detach()
                         .cpu()
                         .numpy()
