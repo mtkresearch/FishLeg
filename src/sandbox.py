@@ -308,7 +308,7 @@ if __name__ == "__main__":
     opt = FishLeg(
                 model,
                 draw,
-                nll,
+                likelihood.nll,
                 dataloader,
                 lr=eta_fl,
                 eps=eps,
@@ -331,11 +331,14 @@ if __name__ == "__main__":
     for e in range(1, epochs+1):
         print("######## EPOCH", e)
         for t, j in enumerate(range(0, len(class_data), batch_size)):    
-            D = input_dist.sample(batch_size)
+            data_x, data_y = input_dist.sample(batch_size)
             opt.zero_grad()
-            loss = nll(opt.model, D)
-            loss.backward()
-            opt.step()
+
+            pred_y = opt.model(data_x)
+            loss = likelihood.nll(data_y, pred_y)
+            loss.backward(retain_graph=True)
+            opt.step((data_x, pred_y))
+            
             if t % 50 == 0:
                 FL_time.append(time.time() - st)
                 LOSS.append(loss.detach().numpy())
@@ -382,7 +385,7 @@ if __name__ == "__main__":
             D = input_dist.sample(batch_size)
             opt.zero_grad()
             loss = nll(model, D)
-            loss.backward()
+            loss.backward(retain_graph=True)
             opt.step()
             
             if t % 50 == 0:
