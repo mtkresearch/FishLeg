@@ -3,10 +3,10 @@ import torch
 import torch.nn as nn
 import copy
 from torch.optim import Optimizer, Adam
-from torch.optim.optimizer import _use_grad_for_differentiable
-from .utils import recursive_setattr, recursive_getattr, update_dict
+# from torch.optim.optimizer import _use_grad_for_differentiable
+from .utils import recursive_setattr, recursive_getattr, update_dict, _use_grad_for_differentiable
 
-from .fishleg_layers import FishLinear
+from .fishleg_layers import FishLinear, FishConv2d 
 
 __all__ = [
     "FishLeg",
@@ -204,7 +204,24 @@ class FishLeg(Optimizer):
                         module.out_features,
                         module.bias is not None,
                         init_scale=self.sgd_lr / self.lr,
-                        device=self.device,
+                        device=self.device
+                    )
+                    replace = update_dict(replace, module)
+                    recursive_setattr(model, name, replace)
+                elif isinstance(module, nn.Conv2d):
+                    replace = FishConv2d(
+                        in_channels = module.in_channels,
+                        out_channels = module.out_channels,
+                        kernel_size = module.kernel_size,
+                        stride = module.stride,
+                        padding = module.padding,
+                        dilation = module.dilation,
+                        groups = module.groups,
+                        bias = (module.bias is not None),
+                        padding_mode = module.padding_mode,
+                        init_scale=self.sgd_lr / self.lr,
+                        device=self.device
+                        # TODO: deal with dtype and device?
                     )
                     replace = update_dict(replace, module)
                     recursive_setattr(model, name, replace)
@@ -248,7 +265,7 @@ class FishLeg(Optimizer):
             for p, g, d_p, para_name in zip(
                 group["params"], grad_norm, qg, group["order"]
             ):
-
+                print(p.data.size(), d_p.size())
                 self.plus_model._modules[name]._parameters[para_name] = (
                     p.data + d_p * self.eps
                 )

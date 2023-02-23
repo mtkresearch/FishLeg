@@ -7,4 +7,5 @@ FISH_LIKELIHOODS = {
     "fixedgaussian": FixedGaussianLikelihood,
     "bernoulli": BernoulliLikelihood,
     "softmax": SoftMaxLikelihood,
+    "categorical": CategoricalLikelihood
 }

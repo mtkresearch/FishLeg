@@ -6,6 +6,16 @@ __all__ = [
     "update_dict",
 ]
 
+def _use_grad_for_differentiable(func):
+    def _use_grad(self, *args, **kwargs):
+        prev_grad = torch.is_grad_enabled()
+        try:
+            torch.set_grad_enabled(self.defaults['differentiable'])
+            ret = func(self, *args, **kwargs)
+        finally:
+            torch.set_grad_enabled(prev_grad)
+        return ret
+    return _use_grad
 
 def recursive_setattr(obj, attr, value):
     attr = attr.split(".", 1)

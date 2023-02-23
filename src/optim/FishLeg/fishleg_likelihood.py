@@ -10,6 +10,7 @@ __all__ = [
     "FixedGaussianLikelihood",
     "BernoulliLikelihood",
     "SoftMaxLikelihood",
+    "CategoricalLikelihood"
 ]
 
 
@@ -90,6 +91,32 @@ class FixedGaussianLikelihood(FishLikelihood):
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
         return preds + torch.normal(0, self.sigma, size=preds.shape).to(self.device)
+
+
+class CategoricalLikelihood(FishLikelihood):
+    """
+    The standard likelihood for classification,
+    but assuming fixed heteroscedastic noise.
+
+    .. math::
+        p(y | f(x)) = f(x) + \epsilon, \:\:\:\: \epsilon \sim N(0,\sigma^{2})
+
+    :param `torch.Tensor` sigma: Known observation
+                            standard deviation for each example.
+
+    """
+
+    def __init__(self, device: str = "cpu") -> None:
+        self.device = device
+
+    def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
+        loss =  torch.nn.CrossEntropyLoss()
+        return loss(preds, observations)
+
+    def draw(self, preds: torch.Tensor) -> torch.Tensor:
+        num_classes = preds.size()[-1]
+        c = torch.distributions.categorical.Categorical(logits=preds).sample()
+        return torch.nn.functional.one_hot(c, num_classes=num_classes)
 
 
 class BernoulliLikelihood(FishLikelihood):
