@@ -1,0 +1,20 @@
+{
+    "beta" : 0.9,
+    "alg" : "FL",
+    "direct_step" : "True",
+    "commit_nr" : "961fef0",
+    "sigma_fixed" : "True",
+    "nu_theta" : 0.05, 
+    "nu_sgd" : 0.01, 
+    "nu_lambda" : 1e-4, 
+    "run" : 1, 
+    "damping" : 0.001,
+    "batch_size" : 1000,
+    "batch_size_aux" : 1000,
+    "target": "MNIST",
+    "sigma_init" : 1.0,
+    "update_every" : 10,
+    "epochs" : 600,
+    "seed_init" : 12,
+    "task":  "Autoencoder"
+}

@@ -1,0 +1,8 @@
+(executables
+ (names dln_exact faces mnist approx_mnist)
+ (libraries stdio cmdargs bos fishleg comm))
+
+(env
+ (dev
+  (flags
+   (:standard -warn-error -A))))

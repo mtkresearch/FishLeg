@@ -1,0 +1,20 @@
+{
+    "beta" : BETA,
+    "alg" : ALG,
+    "direct_step" : DIRECT_STEP,
+    "commit_nr" : COMMIT_NR,
+    "sigma_fixed" : SIGMA_FIXED,
+    "nu_theta" : NU_THETA, 
+    "nu_sgd" : NU_SGD, 
+    "nu_lambda" : NU_LAMBDA, 
+    "run" : RUN, 
+    "damping" : DAMPING,
+    "batch_size" : BATCH_SIZE,
+    "batch_size_aux" : bATCH_SIZE_AUX,
+    "target": TARGET,
+    "sigma_init" : SIGMA_INIT,
+    "update_every" : UPDATE_EVERY,
+    "epochs" : EPOCHS,
+    "seed_init" : SEED_INIT,
+    "task":  "Autoencoder"
+}
