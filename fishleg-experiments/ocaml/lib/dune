@@ -1,0 +1,11 @@
+(library
+ (name fishleg)
+ (public_name fishleg)
+ (libraries stdio base owl prms)
+ (preprocess
+  (pps ppx-prms)))
+
+(env
+ (dev
+  (flags
+   (:standard -warn-error -A))))
