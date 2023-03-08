@@ -139,12 +139,12 @@ class FishLinear(nn.Linear, FishModule):
         The diagonal of this matrix is therefore calculated by
 
         .. math::
-                    \text{diag}(Q_l) = (R_l \circ R_l \otimes L_l \circ L_l)
+                    \\text{diag}(Q_l) = \\text{diag}(R_l R_l^T) \otimes \\text{diag}(L_l L_l^T)
 
-        where :math:`\circ` is the Hadamard operation and :math:`\otimes` remains as
+        where :math:`\\text{diag}` involves summing over the columns of the and :math:`\otimes` remains as
         the Kronecker product.
 
         """
         L = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["L"]
         R = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["R"]
-        return torch.kron((L * L), (R * R))
+        return torch.kron(torch.sum(L * L, axis=1), torch.sum(R * R, axis=1))
