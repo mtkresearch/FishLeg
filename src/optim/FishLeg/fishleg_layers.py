@@ -126,3 +126,27 @@ class FishLinear(nn.Linear, FishModule):
         u = torch.cat([v[0], v[1][:, None]], dim=-1)
         z = torch.linalg.multi_dot((R, R.T, u, L, L.T))
         return (z[:, :-1], z[:, -1])
+
+    def diagQ(self) -> Tensor:
+        """The Q matrix defines the inverse fisher approximation as below:
+
+        .. math::
+                    Q_l = (R_lR_l^T \otimes L_lL_l^T)
+
+        where :math:`l` denotes the l-th layer. The matrix :math:`R_l` has size
+        :math:`(N_{l-1} + 1) \\times (N_{l-1} + 1)` while the matrix :math:`L_l` has
+        size :math:`N_l \\times N_l`. The auxiliarary parameters :math:`\lambda`
+        are represented by the matrices :math:`L_l, R_l`.
+
+        The diagonal of this matrix is therefore calculated by relacing the
+
+        .. math::
+                    Q_l = (R_l \circ R_l \otimes L_l \circ L_l)
+
+        where :math:`\circ` is the Hadamard operation and :math:`\otimes` remains as
+        the Kronecker product.
+
+        """
+        L = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["L"]
+        R = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["R"]
+        return torch.kron((L * L), (R * R))
