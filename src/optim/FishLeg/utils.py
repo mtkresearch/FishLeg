@@ -33,3 +33,14 @@ def update_dict(replace: nn.Module, module: nn.Module) -> nn.Module:
     replace_dict.update(pretrained_dict)
     replace.load_state_dict(replace_dict)
     return replace
+
+def _use_grad_for_differentiable(func):
+    def _use_grad(self, *args, **kwargs):
+        prev_grad = torch.is_grad_enabled()
+        try:
+            torch.set_grad_enabled(self.defaults['differentiable'])
+            ret = func(self, *args, **kwargs)
+        finally:
+            torch.set_grad_enabled(prev_grad)
+        return ret
+    return _use_grad
