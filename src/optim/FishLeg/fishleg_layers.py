@@ -139,7 +139,7 @@ class FishLinear(nn.Linear, FishModule):
         The diagonal of this matrix is therefore calculated by
 
         .. math::
-                    Q_l = (R_l \circ R_l \otimes L_l \circ L_l)
+                    \text{diag}(Q_l) = (R_l \circ R_l \otimes L_l \circ L_l)
 
         where :math:`\circ` is the Hadamard operation and :math:`\otimes` remains as
         the Kronecker product.
