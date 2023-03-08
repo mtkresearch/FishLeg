@@ -136,7 +136,7 @@ class FishLinear(nn.Linear, FishModule):
         size :math:`N_l \\times N_l`. The auxiliarary parameters :math:`\lambda`
         are represented by the matrices :math:`L_l, R_l`.
 
-        The diagonal of this matrix is therefore calculated by relacing the
+        The diagonal of this matrix is therefore calculated by
 
         .. math::
                     Q_l = (R_l \circ R_l \otimes L_l \circ L_l)
