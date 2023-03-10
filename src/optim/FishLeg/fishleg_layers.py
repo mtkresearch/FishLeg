@@ -194,7 +194,8 @@ class FishConv2d(nn.Conv2d, FishModule):
         tmp = torch.reshape(tmp, (-1, self.out_channels))
         tmp = torch.matmul(torch.matmul(tmp, L_o), L_o.T)
         tmp = torch.reshape(tmp, (self.in_channels, self.k_size, self.out_channels))
-        qvW = tmp.permute((2, 0, 1))
+        tmp = tmp.permute((2, 0, 1))
+        qvW = torch.reshape(tmp, (self.out_channels, self.in_channels, self.kernel_size[0], self.kernel_size[1]))
 
         if self.bias:
             b = v[1]

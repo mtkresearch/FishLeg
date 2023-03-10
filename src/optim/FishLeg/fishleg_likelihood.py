@@ -116,7 +116,7 @@ class CategoricalLikelihood(FishLikelihood):
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
         num_classes = preds.size()[-1]
         c = torch.distributions.categorical.Categorical(logits=preds).sample()
-        return torch.nn.functional.one_hot(c, num_classes=num_classes)
+        return torch.nn.functional.one_hot(c, num_classes=num_classes).type(torch.FloatTensor)
 
 
 class BernoulliLikelihood(FishLikelihood):

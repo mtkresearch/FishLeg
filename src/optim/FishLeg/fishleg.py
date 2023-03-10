@@ -249,6 +249,7 @@ class FishLeg(Optimizer):
         self.aux_opt.zero_grad()
         with torch.no_grad():
             pred = self.draw(self.model, data_x)
+            pred.to(self.device)
             g2 = 0.0
             for group in self.param_groups:
                 for p in group["params"]:
@@ -260,24 +261,29 @@ class FishLeg(Optimizer):
             name = group["name"]
 
             grad_norm = [p.grad.data / g2 for p in group["params"]]
+
             qg = group["Qv"](grad_norm)
 
             for p, g, d_p, para_name in zip(
                 group["params"], grad_norm, qg, group["order"]
             ):
-                print(p.data.size(), d_p.size())
-                self.plus_model._modules[name]._parameters[para_name] = (
+                m_p = self.plus_model
+                m_m = self.minus_model
+                for f in name.split("."):    #is there a better way to do this? (layer1.0.conv1)
+                    m_p = m_p._modules[f] 
+                    m_m = m_m._modules[f] 
+                m_p._parameters[para_name] = (
                     p.data + d_p * self.eps
                 )
-                self.minus_model._modules[name]._parameters[para_name] = (
+                m_m._parameters[para_name] = (
                     p.data - d_p * self.eps
                 )
 
                 aux_loss -= 2 * torch.sum(g * d_p)
                 aux_loss += self.damping * d_p.norm(p=2) ** 2
 
-        h_plus = self.nll(self.plus_model, data_x, pred)
-        h_minus = self.nll(self.minus_model, data_x, pred)
+        h_plus = self.nll(self.plus_model, data_x, pred.to(self.device))
+        h_minus = self.nll(self.minus_model, data_x, pred.to(self.device))
 
         aux_loss += (h_plus + h_minus) / (self.eps**2)
         aux_loss.backward()
