@@ -61,6 +61,9 @@ class FishLikelihood:
         """
         raise NotImplementedError
 
+    def __call__(self, observations, preds, **kwargs):
+        return self.nll(observations, preds, **kwargs)
+
 
 class FixedGaussianLikelihood(FishLikelihood):
     """
