@@ -1,9 +1,11 @@
 import torch.nn as nn
+import torch
 
 __all__ = [
     "recursive_setattr",
     "recursive_getattr",
     "update_dict",
+    "_use_grad_for_differentiable",
 ]
 
 
@@ -34,13 +36,15 @@ def update_dict(replace: nn.Module, module: nn.Module) -> nn.Module:
     replace.load_state_dict(replace_dict)
     return replace
 
+
 def _use_grad_for_differentiable(func):
     def _use_grad(self, *args, **kwargs):
         prev_grad = torch.is_grad_enabled()
         try:
-            torch.set_grad_enabled(self.defaults['differentiable'])
+            torch.set_grad_enabled(self.defaults["differentiable"])
             ret = func(self, *args, **kwargs)
         finally:
             torch.set_grad_enabled(prev_grad)
         return ret
+
     return _use_grad
