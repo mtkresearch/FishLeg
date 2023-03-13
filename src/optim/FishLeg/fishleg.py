@@ -203,7 +203,7 @@ class FishLeg(Optimizer):
         for name, module in model.named_modules():
 
             try:
-                if isinstance(module, nn.Linear):
+                if isinstance(module, nn.Linear) and not hasattr(module, "fishleg_aux"):
                     replace = FishLinear(
                         module.in_features,
                         module.out_features,
