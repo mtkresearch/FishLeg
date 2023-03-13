@@ -322,12 +322,16 @@ class FishLeg(Optimizer):
         aux_loss.backward()
         self.aux_opt.step()
 
+    def init_aux_train(self):
+        for _ in range(self.pre_aux_training):
+            self.update_aux()
+
     def step(self) -> None:
         """Performes a single optimization step of FishLeg."""
 
         if self.step_t == 0:
-            for _ in range(self.pre_aux_training):
-                self.update_aux()
+            self.init_aux_train()
+
         if self.update_aux_every > 0:
             if self.step_t % self.update_aux_every == 0:
                 self.update_aux()
