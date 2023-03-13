@@ -3,7 +3,12 @@ import torch
 import torch.nn as nn
 import copy
 from torch.optim import Optimizer, Adam
-from torch.optim.optimizer import _use_grad_for_differentiable
+
+try:
+    from torch.optim.optimizer import _use_grad_for_differentiable
+except ImportError:
+    from .utils import _use_grad_for_differentiable
+
 from .utils import recursive_setattr, recursive_getattr, update_dict
 
 from .fishleg_layers import FishLinear
