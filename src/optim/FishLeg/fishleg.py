@@ -230,22 +230,16 @@ class FishLeg(Optimizer):
         """
         for name, module in model.named_modules():
             try:
-                if isinstance(module, nn.Linear):
-                    if any([p.requires_grad for p in module.parameters()]):
-                        replace = FishLinear(
-                            module.in_features,
-                            module.out_features,
-                            module.bias is not None,
-                            init_scale=np.sqrt(self.sgd_lr / self.fish_lr),
-                            device=self.device,
-                        )
-                        replace = update_dict(replace, module)
-                        # By default, Linear will initialize weight using kaiming_uniform, here we replace with kaiming_normal
-                        if self.initialization == "normal":
-                            init.normal_(
-                                replace.weight, 0, 1 / np.sqrt(module.in_features)
-                            )
-                        recursive_setattr(model, name, replace)
+                if isinstance(module, nn.Linear) and not hasattr(module, "fishleg_aux"):
+                    replace = FishLinear(
+                        module.in_features,
+                        module.out_features,
+                        module.bias is not None,
+                        init_scale=self.sgd_lr / self.lr,
+                        device=self.device,
+                    )
+                    replace = update_dict(replace, module)
+                    recursive_setattr(model, name, replace)
             except KeyError:
                 pass
 
