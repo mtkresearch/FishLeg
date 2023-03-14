@@ -130,6 +130,7 @@ class FishLeg(Optimizer):
         self.sgd_lr = sgd_lr
         self.fish_lr = fish_lr
         self.device = device
+        self.initialization = initialization
 
         self.model = self.init_model_aux(model).to(device)
         self.likelihood = likelihood
@@ -217,7 +218,6 @@ class FishLeg(Optimizer):
         self.beta = beta
         self.pre_aux_training = pre_aux_training
         self.step_t = 0
-        self.initialization = initialization
         self.store_g = True
 
     def init_model_aux(self, model: nn.Module) -> nn.Module:
