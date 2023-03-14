@@ -7,6 +7,8 @@ import numpy as np
 from torch.nn import init
 from torch.optim import Optimizer, Adam
 
+import sys
+
 try:
     from torch.optim.optimizer import _use_grad_for_differentiable
 except ImportError:
@@ -286,12 +288,12 @@ class FishLeg(Optimizer):
         g2 = 0.0
         for group in self.param_groups:
             name = group["name"]
-            for i, (p, para_name) in enumerate(zip(group["params"], group["order"])):
-                grad = p.grad.data
-                g2 = g2 + torch.sum(grad * grad)
-                group["grad"][i].copy_(grad)
+            if g2 != 0:
+                grad_norm = [p.grad.data / g2 for p in group["params"]]
+            else:
+                grad_norm = [0 * p.grad.data for p in group["params"]]
 
-        g_norm = torch.sqrt(g2)
+            qg = group["Qv"](grad_norm)
 
         self.zero_grad()
         # How to better implement this?
