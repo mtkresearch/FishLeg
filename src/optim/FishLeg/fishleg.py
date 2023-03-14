@@ -4,6 +4,8 @@ import torch.nn as nn
 import copy
 from torch.optim import Optimizer, Adam
 
+import sys
+
 try:
     from torch.optim.optimizer import _use_grad_for_differentiable
 except ImportError:
@@ -246,8 +248,11 @@ class FishLeg(Optimizer):
         aux_loss = 0.0
         for group in self.param_groups:
             name = group["name"]
+            if g2 != 0:
+                grad_norm = [p.grad.data / g2 for p in group["params"]]
+            else:
+                grad_norm = [0 * p.grad.data for p in group["params"]]
 
-            grad_norm = [p.grad.data / g2 for p in group["params"]]
             qg = group["Qv"](grad_norm)
 
             for p, g, d_p, para_name in zip(
