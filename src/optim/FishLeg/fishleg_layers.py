@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 from torch import Tensor
 from torch.nn import ParameterDict, Parameter
 from abc import abstractmethod
@@ -88,25 +89,22 @@ class FishLinear(nn.Linear, FishModule):
         super(FishLinear, self).__init__(
             in_features, out_features, bias, device=device, dtype=dtype
         )
+        
         self._layer_name = "Linear"
         self.fishleg_aux = ParameterDict(
             {
-                "scale": Parameter(
-                    torch.ones(
-                        1,
-                    )
-                    * init_scale
-                ),
-                "L": Parameter(torch.eye(in_features + 1)),
-                "R": Parameter(torch.eye(out_features)),
+                "L": Parameter(torch.eye(in_features + 1) * np.sqrt(init_scale)),
+                "R": Parameter(torch.eye(out_features) * np.sqrt(init_scale)),
             }
         )
-        mask_L = torch.triu(torch.ones_like(self.fishleg_aux["L"])).to(device)
+        mask_L = torch.tril(torch.ones_like(self.fishleg_aux["L"])).to(device)
         self.fishleg_aux["L"].register_hook(get_zero_grad_hook(mask_L))
+        
         mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
         self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
 
         self.order = ["weight", "bias"]
+        self.device = device
 
     def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         """For fully-connected layers, the default structure of :math:`Q` as a
@@ -121,8 +119,42 @@ class FishLinear(nn.Linear, FishModule):
         are represented by the matrices :math:`L_l, R_l`.
 
         """
-        L = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["L"]
-        R = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["R"]
+        L = self.fishleg_aux["L"]
+        R = self.fishleg_aux["R"]
         u = torch.cat([v[0], v[1][:, None]], dim=-1)
-        z = torch.linalg.multi_dot((R, R.T, u, L, L.T))
+        z = torch.linalg.multi_dot((R, R.T, u, L.T, L))
         return (z[:, :-1], z[:, -1])
+
+    def Qg(self) -> Tuple[Tensor, Tensor]:
+        """ Speed up Qg product, when batch size is smaller than parameter size.
+            By chain rule:
+                
+            .. math::
+                        DW_i = g_i\hat{a}^T_{i-1}
+            where :math:`DW_i` is gradient of parameter of the ith layer, :math:`g_i` is 
+            gradient w.r.t output of ith layer and :math:`\hat{a}_i` is input to ith layer,
+            and output of (i-1)th layer.
+        """
+        
+        L = self.fishleg_aux["L"]
+        R = self.fishleg_aux["R"]
+        lft = torch.linalg.multi_dot((R.T, R, self._g))
+        rgt = torch.linalg.multi_dot((self._a, L, L.T))
+        z = lft@rgt
+        return (z[:, :-1], z[:, -1])
+
+    def save_layer_input(self, input_: list[Tensor]) -> None:
+        a = input_[0].to(self.device).clone()
+        a = a.view(-1, a.size(-1))
+        if self.bias is not None:
+            a = torch.cat([a, a.new_ones((*a.shape[:-1], 1))], dim=-1)
+        self._a = a
+
+    def save_layer_grad_output(
+        self, 
+        grad_output: tuple[Tensor,...],
+    ) -> None:
+        g = grad_output[0].to(self.device)
+        g = g.view(-1, g.size(-1))
+        self._g = g.T
+

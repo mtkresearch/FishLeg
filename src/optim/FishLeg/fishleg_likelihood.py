@@ -1,13 +1,18 @@
 import torch
+import numpy as np
+from typing import List
 from torch.distributions.categorical import Categorical
 from torch.distributions.bernoulli import Bernoulli
 from torch.nn.functional import one_hot, log_softmax
+from torch.nn import Parameter
+
 
 from abc import abstractmethod
 
 __all__ = [
     "FishLikelihood",
     "FixedGaussianLikelihood",
+    "GaussianLikelihood",
     "BernoulliLikelihood",
     "SoftMaxLikelihood",
 ]
@@ -61,6 +66,12 @@ class FishLikelihood:
         """
         raise NotImplementedError
 
+    def get_parameters(self) -> List:
+        r"""
+        return a list of learnable parameter.
+
+        """
+        return []
 
 class FixedGaussianLikelihood(FishLikelihood):
     """
@@ -84,13 +95,53 @@ class FixedGaussianLikelihood(FishLikelihood):
         return self.sigma
 
     def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
-        return 0.5 * (
-            torch.square((observations - preds) / self.sigma).sum()
-        ) / preds.shape[0] + torch.log(self.sigma**2)
+        logsigma2 = torch.log(torch.square(self.sigma))
+        return 0.5 / preds.shape[0] * torch.sum(
+                logsigma2 + torch.square((observations - preds) / self.sigma) 
+            )  
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
         return preds + torch.normal(0, self.sigma, size=preds.shape).to(self.device)
 
+class GaussianLikelihood(FishLikelihood):
+    """
+    The standard likelihood for regression,
+    but assuming fixed heteroscedastic noise.
+
+    .. math::
+        p(y | f(x)) = f(x) + \epsilon, \:\:\:\: \epsilon \sim N(0,\sigma^{2})
+
+    :param `torch.Tensor` sigma: standard deviation for each example;
+                    also to be learned during training.
+    """
+    def __init__(self, sigma: torch.Tensor, device: str = 'cpu') -> None:
+        self.device = device
+        self.sigma = Parameter(torch.tensor(sigma))
+        self.sigma.to(self.device)
+
+    def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
+        logsigma2 = torch.log(torch.square(self.sigma))
+        return 0.5 / preds.shape[0] * torch.sum(
+                logsigma2 + torch.square((observations - preds) / self.sigma) 
+            )
+    def draw(self, preds: torch.Tensor) -> torch.Tensor:
+        return preds + torch.normal(0, self.sigma.data, size=preds.shape).to(self.device)
+
+    def get_parameters(self) -> List:
+        return [self.sigma,]
+
+    def init_aux(self, init_scale) -> None:
+        self.lam = Parameter(
+                    torch.tensor(init_scale)
+                )
+        self.lam.to(self.device)
+        self.order = ['lambda',]
+
+    def get_aux_parameters(self) -> List:
+        return [self.lam,]
+
+    def Qv(self, v) -> List:
+        return [torch.square(self.lam) * v[0],]
 
 class BernoulliLikelihood(FishLikelihood):
     r"""
@@ -107,18 +158,11 @@ class BernoulliLikelihood(FishLikelihood):
         self.device = device
 
     def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
-
-        result = (
-            -torch.sum(
-                torch.log(1 - preds + 1e-5) * (1.0 - observations)
-                + torch.log(preds + 1e-5) * observations
-            )
-            / preds.shape[0]
-        )
-        return result
+        bce = torch.sum(preds * (1. - observations) + torch.nn.Softplus()(-preds))
+        return bce / preds.shape[0]
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
-        return Bernoulli(probs=preds).sample()
+        return Bernoulli(logits=preds).sample()
 
 
 class SoftMaxLikelihood(FishLikelihood):

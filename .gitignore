@@ -137,3 +137,4 @@ dmypy.json
 
 src/optim/sphinx
 data/
+src/training_output
