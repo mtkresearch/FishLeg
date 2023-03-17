@@ -97,11 +97,10 @@ class FishLinear(nn.Linear, FishModule):
                 "R": Parameter(torch.eye(out_features) * np.sqrt(init_scale)),
             }
         )
-        mask_L = torch.tril(torch.ones_like(self.fishleg_aux["L"])).to(device)
-        self.fishleg_aux["L"].register_hook(get_zero_grad_hook(mask_L))
-
-        mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
-        self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
+        # mask_L = torch.triu(torch.ones_like(self.fishleg_aux["L"])).to(device)
+        # self.fishleg_aux["L"].register_hook(get_zero_grad_hook(mask_L))
+        # mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
+        # self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
 
         self.order = ["weight", "bias"]
         self.device = device

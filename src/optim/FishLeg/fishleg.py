@@ -313,11 +313,9 @@ class FishLeg(Optimizer):
             grad_norm = [grad / g_norm for grad in group["grad"]]
             qg = group["Qg"]()
 
-            for p, g, d_p in zip(group["params"], grad_norm, qg):
-                grad = p.grad.data
-                quad_term = quad_term + torch.sum(grad * d_p)
-                linear_term = linear_term + torch.sum(g * d_p)
-                reg_term = reg_term + self.damping * torch.sum(d_p * d_p)
+        aux_loss += (h_plus + h_minus) / (self.eps**2)
+        print(aux_loss)
+        aux_loss.backward()
 
         quad_term = quad_term**2
         aux_loss = 0.5 * (reg_term + quad_term) - linear_term
