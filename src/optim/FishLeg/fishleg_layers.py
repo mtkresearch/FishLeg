@@ -1,4 +1,5 @@
 import torch
+import sys
 import torch.nn as nn
 import numpy as np
 from torch import Tensor
@@ -71,7 +72,7 @@ class FishModule(nn.Module):
 
 def get_zero_grad_hook(mask: torch.Tensor) -> Callable[[torch.Tensor], torch.Tensor]:
     def hook(grad: torch.Tensor) -> torch.Tensor:
-        return grad * mask
+        return grad * mask.to(grad.get_device())
 
     return hook
 
@@ -97,10 +98,10 @@ class FishLinear(nn.Linear, FishModule):
                 "R": Parameter(torch.eye(out_features) * np.sqrt(init_scale)),
             }
         )
-        # mask_L = torch.triu(torch.ones_like(self.fishleg_aux["L"])).to(device)
-        # self.fishleg_aux["L"].register_hook(get_zero_grad_hook(mask_L))
-        # mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
-        # self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
+        mask_L = torch.triu(torch.ones_like(self.fishleg_aux["L"])).to(device)
+        self.fishleg_aux["L"].register_hook(get_zero_grad_hook(mask_L))
+        mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
+        self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
 
         self.order = ["weight", "bias"]
         self.device = device
@@ -118,8 +119,9 @@ class FishLinear(nn.Linear, FishModule):
         are represented by the matrices :math:`L_l, R_l`.
 
         """
-        L = self.fishleg_aux["L"]
-        R = self.fishleg_aux["R"]
+        L = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["L"]
+        R = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["R"]
+        # print("u", v[0].shape, v[1][:, None].shape)
         u = torch.cat([v[0], v[1][:, None]], dim=-1)
         z = torch.linalg.multi_dot((R, R.T, u, L.T, L))
         return (z[:, :-1], z[:, -1])

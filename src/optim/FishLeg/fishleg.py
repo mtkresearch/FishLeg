@@ -314,7 +314,6 @@ class FishLeg(Optimizer):
             qg = group["Qg"]()
 
         aux_loss += (h_plus + h_minus) / (self.eps**2)
-        print(aux_loss)
         aux_loss.backward()
 
         quad_term = quad_term**2
