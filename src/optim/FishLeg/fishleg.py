@@ -273,7 +273,6 @@ class FishLeg(Optimizer):
         h_minus = self.nll(self.minus_model, data_x, pred)
 
         aux_loss += (h_plus + h_minus) / (self.eps**2)
-        print(aux_loss)
         aux_loss.backward()
 
         self.aux_opt.step()
