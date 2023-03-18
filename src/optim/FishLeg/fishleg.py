@@ -282,7 +282,7 @@ class FishLeg(Optimizer):
         self.aux_opt.zero_grad()
         with torch.no_grad():
             self.store_g = False
-            samples = self.draw(self.model, data)
+            samples = self.draw(self.model, data[0])
             self.store_g = True
 
         g2 = 0.0
@@ -299,7 +299,7 @@ class FishLeg(Optimizer):
         # How to better implement this?
         # The hook is not updated here, locally, only the gradient to the parameters g.grad is updated
         self.store_g = False
-        self.nll(self.model, samples).backward()
+        self.nll(self.model, samples, data[1]).backward()
         self.store_g = True
 
         gm_norm = 0.0
