@@ -150,21 +150,16 @@ class FishLinear(nn.Linear, FishModule):
         R = self.fishleg_aux["R"]
         return torch.kron(torch.sum(R * R, axis=1), torch.sum(L * L, axis=1))
 
+    def save_layer_input(self, input_: List[Tensor]) -> None:
+        a = input_[0].to(self.device).clone()
+        a = a.view(-1, a.size(-1))
+        if self.bias is not None:
+            a = torch.cat([a, a.new_ones((*a.shape[:-1], 1))], dim=-1)
+        self._a = a
 
-class FishConv2d(nn.Conv2d, FishModule):
-    def __init__(
+    def save_layer_grad_output(
         self,
-        in_channels: int,
-        out_channels: int,
-        kernel_size,
-        stride=1,
-        padding=0,
-        dilation=1,
-        groups: int = 1,
-        bias: bool = True,
-        padding_mode: str = "zeros",
-        init_scale: float = 1.0,
-        device=None,
+        grad_output: Tuple[Tensor, ...],
     ) -> None:
         super(FishConv2d, self).__init__(
             in_channels=in_channels,
