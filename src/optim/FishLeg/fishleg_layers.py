@@ -143,7 +143,7 @@ class FishLinear(nn.Linear, FishModule):
         z = lft@rgt
         return (z[:, :-1], z[:, -1])
 
-    def save_layer_input(self, input_: list[Tensor]) -> None:
+    def save_layer_input(self, input_: List[Tensor]) -> None:
         a = input_[0].to(self.device).clone()
         a = a.view(-1, a.size(-1))
         if self.bias is not None:
@@ -152,7 +152,7 @@ class FishLinear(nn.Linear, FishModule):
 
     def save_layer_grad_output(
         self, 
-        grad_output: tuple[Tensor,...],
+        grad_output: Tuple[Tensor,...],
     ) -> None:
         g = grad_output[0].to(self.device)
         g = g.view(-1, g.size(-1))
