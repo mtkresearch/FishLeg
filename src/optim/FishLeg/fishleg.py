@@ -349,6 +349,7 @@ class FishLeg(Optimizer):
 
         aux_loss = 0.5 * (reg_term + quad_term) - linear_term
         aux_loss.backward() 
+        self.aux_loss = aux_loss.item()
         self.aux_opt.step()
         if self.aux_scheduler is not None:
             self.aux_scheduler.step()
