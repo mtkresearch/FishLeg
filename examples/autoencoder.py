@@ -418,6 +418,7 @@ if __name__ == "__main__":
         sgd_lr=eta_sgd,
         initialization="normal",
         device=device,
+        batch_speedup=False
     )
 
     print(opt.__dict__["fish_lr"])

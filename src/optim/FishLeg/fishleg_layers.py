@@ -123,7 +123,7 @@ class FishLinear(nn.Linear, FishModule):
         R = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["R"]
         # print("u", v[0].shape, v[1][:, None].shape)
         u = torch.cat([v[0], v[1][:, None]], dim=-1)
-        z = torch.linalg.multi_dot((R, R.T, u, L, L.T))
+        z = torch.linalg.multi_dot((R.T, R, u, L, L.T))
         return (z[:, :-1], z[:, -1])
 
     def diagQ(self) -> Tensor:
