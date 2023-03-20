@@ -318,10 +318,6 @@ class FishLeg(Optimizer):
             name = group["name"]
 
             grad_norm = [grad / g_norm for grad in group["grad"]]
-            if g_norm != 0:
-                grad_norm = [grad / g_norm for grad in group["grad"]]
-            else:
-                grad_norm = [0 * grad for grad in group["grad"]]
 
             qg = group["Qg"]()
 
