@@ -132,12 +132,14 @@ class FishLeg(Optimizer):
         sgd_lr: float = 1e-2,
         initialization: str = "uniform",
         device: str = "cpu",
-        num_steps=None,
+        num_steps = None,
+        para_name: str = ''
     ) -> None:
         self.model = model
         self.sgd_lr = sgd_lr
         self.fish_lr = fish_lr
         self.device = device
+        self.para_name = para_name
         self.initialization = initialization
 
         self.model = self.init_model_aux(model).to(device)
@@ -146,7 +148,7 @@ class FishLeg(Optimizer):
         self.draw = draw
         self.nll = nll
         self.aux_dataloader = aux_dataloader
-
+        
         param_groups = []
         for module_name, module in self.model.named_modules():
             if hasattr(module, "fishleg_aux"):
@@ -206,13 +208,16 @@ class FishLeg(Optimizer):
             eps=aux_eps,
             weight_decay=weight_decay,
         )
-        self.aux_scheduler = get_scheduler(
-            name="linear",
-            optimizer=self.aux_opt,
-            num_warmup_steps=0,
-            num_training_steps=num_steps,
-        )
 
+        if num_steps is not None:
+            self.aux_scheduler = get_scheduler(
+                name='linear', optimizer=self.aux_opt,
+                num_warmup_steps=0,
+                num_training_steps=num_steps
+            )
+        else: 
+            self.aux_scheduler = None
+        
         self.update_aux_every = update_aux_every
         self.aux_lr = aux_lr
         self.aux_betas = aux_betas
@@ -241,38 +246,20 @@ class FishLeg(Optimizer):
         """
         for name, module in model.named_modules():
             try:
-                if isinstance(module, nn.Linear):
-                    if any([p.requires_grad for p in module.parameters()]):
-                        replace = FishLinear(
-                            module.in_features,
-                            module.out_features,
-                            module.bias is not None,
-                            init_scale=np.sqrt(self.sgd_lr / self.fish_lr),
-                            device=self.device,
-                        )
-                        replace = update_dict(replace, module)
-                        # By default, Linear will initialize weight using kaiming_uniform, here we replace with kaiming_normal
-                        if self.initialization == "normal":
-                            init.normal_(
-                                replace.weight, 0, 1 / np.sqrt(module.in_features)
+                if self.para_name in name:
+                    if isinstance(module, nn.Linear):
+                        if any([p.requires_grad for p in module.parameters()]):
+                            replace = FishLinear(
+                                module.in_features,
+                                module.out_features,
+                                module.bias is not None,
+                                init_scale=np.sqrt(self.sgd_lr / self.fish_lr),
+                                device=self.device,
                             )
-                        recursive_setattr(model, name, replace)
-
-                elif isinstance(module, nn.Conv2d):
-                    replace = FishConv2d(
-                        in_channels=module.in_channels,
-                        out_channels=module.out_channels,
-                        kernel_size=module.kernel_size,
-                        stride=module.stride,
-                        padding=module.padding,
-                        dilation=module.dilation,
-                        groups=module.groups,
-                        bias=(module.bias is not None),
-                        padding_mode=module.padding_mode,
-                        init_scale=self.sgd_lr / self.lr,
-                        device=self.device
-                        # TODO: deal with dtype and device?
-                    )
+                            replace = update_dict(replace, module)
+                            if self.initialization == 'normal':
+                                init.normal_(replace.weight,0,1/np.sqrt(module.in_features)) 
+                            recursive_setattr(model, name, replace)
             except KeyError:
                 pass
 
@@ -339,9 +326,13 @@ class FishLeg(Optimizer):
 
         for group in self.param_groups:
             name = group["name"]
-
-            # grad_norm = [grad/g_norm for grad in group['grad']]
+            
+            grad_norm = [grad/g_norm for grad in group['grad']]
             qg = group["Qg"]()
+
+            for p, g, d_p in zip(
+                group['params'], grad_norm, qg
+            ):
 
             for p, g, d_p in zip(group["params"], group["grad"], qg):
                 grad = p.grad.data
@@ -355,16 +346,10 @@ class FishLeg(Optimizer):
         aux_loss.backward()
         self.aux_loss = aux_loss.item()
         self.aux_opt.step()
-        self.aux_scheduler.step()
-        return (
-            aux_loss,
-            linear_term,
-            quad_term,
-            reg_term,
-            g2,
-            self.aux_scheduler.get_last_lr()[0],
-        )
-
+        if self.aux_scheduler is not None:
+            self.aux_scheduler.step()
+        return aux_loss, linear_term, quad_term, reg_term, g2
+    
     def step(self) -> None:
         """Performes a single optimization step of FishLeg."""
 
@@ -378,22 +363,20 @@ class FishLeg(Optimizer):
                 data = next(iter(self.aux_dataloader))
                 data = self._prepare_input(data)
                 self.nll(self.model, data).backward()
-                aux_loss, linear_term, quad_term, reg_term, g2, lr = self.update_aux()
+                aux_loss, linear_term, quad_term, reg_term, g2 = self.update_aux()
                 aux += aux_loss
 
                 if pre % 10 == 0 and pre != 0:
-                    print(
-                        "aux_loss: {:.4f}, \t linear: {:.4f}, quad: {:.4f}, reg: {:.4f} g2: {:.4} lr: {:f}".format(
-                            aux / 10, linear_term, quad_term, reg_term, g2, lr
-                        )
-                    )
+                    print('aux_loss: {:.4f}, \t linear: {:.4f}, quad: {:.4f}, reg: {:.4f} g2: {:.4}'.format(
+                            aux/10, linear_term, quad_term, reg_term, g2
+                         ))
                     aux = 0
                 aux_losses.append(aux_loss.detach().cpu().numpy())
             return aux_losses
 
         if self.update_aux_every > 0:
             if self.step_t % self.update_aux_every == 0:
-                self.update_aux()
+                aux_loss, linear_term, quad_term, reg_term, g2 = self.update_aux()
         elif self.update_aux_every < 0:
             for _ in range(-self.update_aux_every):
                 self.update_aux()
@@ -409,9 +392,9 @@ class FishLeg(Optimizer):
                     group["params"], nat_grad, group["gradbar"], group["theta0"]
                 ):
                     gbar.copy_(self.beta * gbar + (1.0 - self.beta) * d_p)
-                    delta = gbar.add(p, alpha=self.weight_decay / self.fish_lr)
-                    p.add_(delta, alpha=-self.fish_lr)
-
+                    delta = gbar.add(p, alpha=self.weight_decay/self.fish_lr)
+                    p.add_(delta, alpha=-self.fish_lr) 
+                    
     @torch.no_grad()
     def _save_input(
         self,
