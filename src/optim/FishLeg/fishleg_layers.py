@@ -122,7 +122,7 @@ class FishLinear(nn.Linear, FishModule):
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
         u = torch.cat([v[0], v[1][:, None]], dim=-1)
-        z = torch.linalg.multi_dot((R, R.T, u, L.T, L))
+        z = torch.linalg.multi_dot((R.T, R, u, L, L.T))
         return (z[:, :-1], z[:, -1])
 
     def Qg(self) -> Tuple[Tensor, Tensor]:
