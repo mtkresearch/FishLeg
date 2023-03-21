@@ -181,4 +181,5 @@ class FishLinear(nn.Linear, FishModule):
         """
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
+        print(L)
         return torch.kron(torch.sum(R * R, axis=1), torch.sum(L * L, axis=1))
