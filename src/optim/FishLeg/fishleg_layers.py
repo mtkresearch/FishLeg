@@ -123,7 +123,7 @@ class FishLinear(nn.Linear, FishModule):
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
         u = torch.cat([v[0], v[1][:, None]], dim=-1)
-        z = torch.linalg.multi_dot((R, R.T, u, L.T, L))
+        z = torch.linalg.multi_dot((R, R.T, u, L, L.T))
         return (z[:, :-1], z[:, -1])
 
     def Qg(self) -> Tuple[Tensor, Tensor]:
@@ -182,3 +182,78 @@ class FishLinear(nn.Linear, FishModule):
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
         return torch.kron(torch.sum(R * R, axis=1), torch.sum(L * L, axis=1))
+
+class FishConv2d(nn.Conv2d, FishModule):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size,
+        stride = 1,
+        padding = 0,
+        dilation = 1,
+        groups: int = 1,
+        bias: bool = True,
+        padding_mode: str = 'zeros',
+        init_scale: float = 1.0, 
+        device=None
+    ) -> None:
+        super(FishConv2d, self).__init__(
+            in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, 
+            groups=groups, bias=bias, padding_mode=padding_mode)
+        self._layer_name = "Conv2d"
+
+        self.k_size = self.kernel_size[0]*self.kernel_size[1]
+        eff_scale = init_scale**(1.0/3)
+        self.fishleg_aux = ParameterDict(
+            {
+                "L_o": Parameter(torch.eye(out_channels, device=device)*eff_scale),
+                "L_i": Parameter(torch.eye(in_channels, device=device)*eff_scale),
+                "L_k": Parameter(torch.eye(self.k_size, device=device)*eff_scale),
+                "L_b": Parameter(torch.eye(out_channels, device=device)*eff_scale),
+            }
+        )
+
+        self.order = ["weight", "bias"] if bias else ["weight"]
+
+    def Qv(self, v: Tuple[Tensor, Optional[Tensor]]) -> Tuple[Tensor, Optional[Tensor]]:
+        """For fully-connected layers, the default structure of :math:`Q` as a
+        block-diaglonal matrix is,
+        .. math::
+                    Q_l = (R_lR_l^T \otimes L_lL_l^T)
+        where :math:`l` denotes the l-th layer. The matrix :math:`R_l` has size
+        :math:`(N_{l-1} + 1) \\times (N_{l-1} + 1)` while the matrix :math:`L_l` has
+        size :math:`N_l \\times N_l`. The auxiliarary parameters :math:`\lambda`
+        are represented by the matrices :math:`L_l, R_l`.
+        """
+
+        # Qv product for the weights
+        W = v[0]
+        L_o = self.fishleg_aux["L_o"]
+        L_i = self.fishleg_aux["L_i"]
+        L_k = self.fishleg_aux["L_k"]
+        L_b = self.fishleg_aux["L_b"]
+
+        tmp = torch.reshape(W, (-1, self.k_size))
+        tmp = torch.matmul(torch.matmul(tmp, L_k), L_k.T)
+        tmp = torch.reshape(tmp, (self.out_channels, self.in_channels, self.k_size))
+        tmp = torch.transpose(tmp, 1, 2)
+        tmp = torch.reshape(tmp, (-1, self.in_channels))
+        tmp = torch.matmul(torch.matmul(tmp, L_i), L_i.T)
+        tmp = torch.reshape(tmp, (self.out_channels, self.k_size, self.in_channels))
+        tmp = torch.transpose(tmp, 0, 2)
+        tmp = torch.reshape(tmp, (-1, self.out_channels))
+        tmp = torch.matmul(torch.matmul(tmp, L_o), L_o.T)
+        tmp = torch.reshape(tmp, (self.in_channels, self.k_size, self.out_channels))
+        tmp = tmp.permute((2, 0, 1))
+        qvW = torch.reshape(tmp, (self.out_channels, self.in_channels, self.kernel_size[0], self.kernel_size[1]))
+
+        if self.bias:
+            b = v[1]
+            bs = tuple(torch.size(bs))
+            b = torch.reshape(b, (-1, 1))
+            qvB = torch.matmul(L_b, torch.matmul(L_b.T, b))
+            qvB = torch.reshape(qvB, bs)
+            return (qvW, qvB)
+        else:
+            return (qvW, )
