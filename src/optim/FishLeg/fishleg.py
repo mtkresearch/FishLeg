@@ -16,7 +16,7 @@ except ImportError:
 
 from .utils import recursive_setattr, recursive_getattr, update_dict
 
-from .fishleg_layers import FishLinear
+from .fishleg_layers import FishLinear,FishConv2d 
 from .fishleg_likelihood import FishLikelihood
 
 __all__ = [
@@ -249,6 +249,22 @@ class FishLeg(Optimizer):
                                 replace.weight, 0, 1 / np.sqrt(module.in_features)
                             )
                         recursive_setattr(model, name, replace)
+
+                elif isinstance(module, nn.Conv2d):
+                    replace = FishConv2d(
+                        in_channels = module.in_channels,
+                        out_channels = module.out_channels,
+                        kernel_size = module.kernel_size,
+                        stride = module.stride,
+                        padding = module.padding,
+                        dilation = module.dilation,
+                        groups = module.groups,
+                        bias = (module.bias is not None),
+                        padding_mode = module.padding_mode,
+                        init_scale=self.sgd_lr / self.lr,
+                        device=self.device
+                        # TODO: deal with dtype and device?
+                    )
             except KeyError:
                 pass
 
