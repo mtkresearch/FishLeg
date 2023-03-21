@@ -126,9 +126,7 @@ class ImageDataSet(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
-        return torch.tensor(self._images[idx]), torch.tensor(
-            self._labels[idx]
-        )
+        return torch.tensor(self._images[idx]), torch.tensor(self._labels[idx])
 
 
 def _read32(bytestream):
@@ -225,11 +223,11 @@ def read_data_sets(name_dataset, home_path, if_autoencoder=True):
 
         SOURCE_URL = "http://www.cs.toronto.edu/~jmartens/"
         TRAIN_IMAGES = "newfaces_rot_single.mat"
-        
+
         local_file = maybe_download(SOURCE_URL, TRAIN_IMAGES, train_dir)
         print(f"Data read from {local_file}")
-        
-        numpy_file = os.path.dirname(local_file) + '/faces.npy'
+
+        numpy_file = os.path.dirname(local_file) + "/faces.npy"
         if os.path.exists(numpy_file):
             images_ = np.load(numpy_file)
         else:
@@ -237,7 +235,7 @@ def read_data_sets(name_dataset, home_path, if_autoencoder=True):
 
             images_ = mat4py.loadmat(local_file)
             images_ = np.asarray(images_["newfaces_single"])
-        
+
             images_ = np.transpose(images_)
             np.save(numpy_file, images_)
             print(f"Data saved to {numpy_file}")
@@ -276,9 +274,8 @@ def read_data_sets(name_dataset, home_path, if_autoencoder=True):
 if __name__ == "__main__":
 
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('--exp', type=str, help='which dataset', default='FACES')
+    argparser.add_argument("--exp", type=str, help="which dataset", default="FACES")
     args = argparser.parse_args()
-
 
     seed = 13
     torch.manual_seed(seed)
@@ -291,7 +288,7 @@ if __name__ == "__main__":
     print("device", device)
 
     ## Hyperparams
-    if args.exp == 'FACES':
+    if args.exp == "FACES":
 
         batch_size = 100
         epochs = 5
@@ -304,8 +301,8 @@ if __name__ == "__main__":
         damping = 1.0
 
         dataset = read_data_sets("FACES", "../data/", if_autoencoder=True)
-    
-    if args.exp == 'MNIST':
+
+    if args.exp == "MNIST":
         batch_size = 100
         epochs = 10
         eta_adam = 1e-4
@@ -321,19 +318,23 @@ if __name__ == "__main__":
     ## Dataset
     train_dataset = dataset.train
     test_dataset = dataset.test
-    if args.exp == 'FACES':
-        likelihood = FISH_LIKELIHOODS['fixedgaussian'](sigma=1.0, device=device)
+    if args.exp == "FACES":
+        likelihood = FISH_LIKELIHOODS["fixedgaussian"](sigma=1.0, device=device)
+
         def mse(model, data):
             data_x, data_y = data
             pred_y = model.forward(data_x)
-            return torch.mean(torch.square(pred_y-data_y))
-    if args.exp == 'MNIST':
-        likelihood = FISH_LIKELIHOODS['bernoulli'](device=device)
+            return torch.mean(torch.square(pred_y - data_y))
+
+    if args.exp == "MNIST":
+        likelihood = FISH_LIKELIHOODS["bernoulli"](device=device)
+
         def mse(model, data):
             data_x, data_y = data
             pred_y = model.forward(data_x)
             pred_y = torch.sigmoid(pred_y)
-            return torch.mean(torch.square(pred_y-data_y))
+            return torch.mean(torch.square(pred_y - data_y))
+
     def nll(model, data):
         data_x, data_y = data
         pred_y = model.forward(data_x)
@@ -343,7 +344,6 @@ if __name__ == "__main__":
         data_x, data_y = data
         pred_y = model.forward(data_x)
         return (data_x, likelihood.draw(pred_y))
-
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True
@@ -360,43 +360,42 @@ if __name__ == "__main__":
         test_dataset, batch_size=1000, shuffle=False
     )
 
-    
-    if args.exp == 'FACES':
+    if args.exp == "FACES":
         model = nn.Sequential(
-        nn.Linear(625, 2000),
-        nn.ReLU(),
-        nn.Linear(2000, 1000),
-        nn.ReLU(),
-        nn.Linear(1000, 500),
-        nn.ReLU(),
-        nn.Linear(500, 30),
-        nn.Linear(30, 500),
-        nn.ReLU(),
-        nn.Linear(500, 1000),
-        nn.ReLU(),
-        nn.Linear(1000, 2000),
-        nn.ReLU(),
-        nn.Linear(2000, 625),
+            nn.Linear(625, 2000),
+            nn.ReLU(),
+            nn.Linear(2000, 1000),
+            nn.ReLU(),
+            nn.Linear(1000, 500),
+            nn.ReLU(),
+            nn.Linear(500, 30),
+            nn.Linear(30, 500),
+            nn.ReLU(),
+            nn.Linear(500, 1000),
+            nn.ReLU(),
+            nn.Linear(1000, 2000),
+            nn.ReLU(),
+            nn.Linear(2000, 625),
         ).to(device)
-    
-    if args.exp == 'MNIST':
+
+    if args.exp == "MNIST":
         model = nn.Sequential(
-        nn.Linear(784, 1000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(1000, 500, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(500, 250, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(250, 30, dtype=torch.float32),
-        nn.Linear(30, 250, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(250, 500, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(500, 1000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(1000, 784, dtype=torch.float32),
+            nn.Linear(784, 1000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(1000, 500, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(500, 250, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(250, 30, dtype=torch.float32),
+            nn.Linear(30, 250, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(250, 500, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(500, 1000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(1000, 784, dtype=torch.float32),
         ).to(device)
-    
+
     model_adam = copy.deepcopy(model)
 
     print("lr fl={}, lr sgd={}, lr aux={}".format(eta_fl, eta_sgd, aux_eta))
@@ -417,10 +416,15 @@ if __name__ == "__main__":
         damping=damping,
         pre_aux_training=0,
         sgd_lr=eta_sgd,
-        initialization='normal',
+        initialization="normal",
         device=device,
     )
 
+    print(opt.__dict__["fish_lr"])
+    print(opt.__dict__["beta"])
+    print(opt.__dict__["aux_lr"])
+    print(opt.__dict__["damping"])
+    print(opt.__dict__["sgd_lr"])
 
     FL_time = []
     LOSS = []
@@ -429,7 +433,7 @@ if __name__ == "__main__":
     iteration = 0
     for e in range(1, epochs + 1):
         print("######## EPOCH", e)
-        for n, (batch_data, batch_labels) in enumerate(train_loader):
+        for n, (batch_data, batch_labels) in enumerate(train_loader, start=1):
             iteration += 1
             batch_data, batch_labels = batch_data.to(device), batch_labels.to(device)
             opt.zero_grad()
@@ -440,16 +444,18 @@ if __name__ == "__main__":
             if n % 50 == 0:
                 FL_time.append(time.time() - st)
                 LOSS.append(loss.detach().cpu().numpy())
-                
+
                 test_batch_data, test_batch_labels = next(iter(test_loader))
-                test_batch_data, test_batch_labels = test_batch_data.to(device), test_batch_labels.to(device)
+                test_batch_data, test_batch_labels = test_batch_data.to(
+                    device
+                ), test_batch_labels.to(device)
                 test_loss = mse(opt.model, (test_batch_data, test_batch_labels))
-                    
+
                 TEST_LOSS.append(test_loss.detach().cpu().numpy())
 
                 print(n, LOSS[-1], TEST_LOSS[-1])
-    
-    fig, axs = plt.subplots(1,2, figsize=(10,5))
+
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
     axs[0].plot(FL_time, LOSS, label="Fishleg")  # color=colors_group[i])
     axs[1].plot(
         FL_time, TEST_LOSS, label="Fishleg"
@@ -478,10 +484,12 @@ if __name__ == "__main__":
             opt.step()
 
             if n % 50 == 0:
-                FL_time.append(time.time()-st)
+                FL_time.append(time.time() - st)
                 LOSS.append(loss.detach().cpu().numpy())
                 test_batch_data, test_batch_labels = next(iter(test_loader_adam))
-                test_batch_data, test_batch_labels = test_batch_data.to(device), test_batch_labels.to(device)
+                test_batch_data, test_batch_labels = test_batch_data.to(
+                    device
+                ), test_batch_labels.to(device)
                 test_loss = mse(model_adam, (test_batch_data, test_batch_labels))
                 TEST_LOSS.append(test_loss.detach().cpu().numpy())
 
@@ -489,10 +497,10 @@ if __name__ == "__main__":
 
     axs[0].plot(FL_time, LOSS, label="Adam")
     axs[1].plot(FL_time, TEST_LOSS, label="Adam")
-    
+
     axs[0].legend()
     axs[1].legend()
 
-    axs[0].set_title('Training Loss')
-    axs[1].set_title('Test MSE')
+    axs[0].set_title("Training Loss")
+    axs[1].set_title("Test MSE")
     fig.savefig("result/result.png", dpi=300)

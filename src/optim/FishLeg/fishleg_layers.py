@@ -146,6 +146,7 @@ class FishLinear(nn.Linear, FishModule):
         the Kronecker product.
 
         """
-        L = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["L"]
-        R = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["R"]
+        L = self.fishleg_aux["L"]
+        R = self.fishleg_aux["R"]
+        print(L)
         return torch.kron(torch.sum(R * R, axis=1), torch.sum(L * L, axis=1))
