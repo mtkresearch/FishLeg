@@ -332,6 +332,7 @@ class FishLeg(Optimizer):
         quad_term = quad_term**2
         aux_loss = 0.5 * (reg_term + quad_term) - linear_term
         aux_loss.backward()
+        self.aux_loss = aux_loss.item()
         self.aux_opt.step()
 
     def init_aux_train(self):
