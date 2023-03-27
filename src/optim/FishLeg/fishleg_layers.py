@@ -6,7 +6,7 @@ from torch import Tensor
 from torch.nn import ParameterDict, Parameter
 from abc import abstractmethod
 
-from typing import Any, List, Dict, Tuple, Callable
+from typing import Any, List, Dict, Tuple, Callable, Optional
 
 __all__ = [
     "FishLinear",
@@ -183,34 +183,43 @@ class FishLinear(nn.Linear, FishModule):
         R = self.fishleg_aux["R"]
         return torch.kron(torch.sum(R * R, axis=1), torch.sum(L * L, axis=1))
 
+
 class FishConv2d(nn.Conv2d, FishModule):
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
         kernel_size,
-        stride = 1,
-        padding = 0,
-        dilation = 1,
+        stride=1,
+        padding=0,
+        dilation=1,
         groups: int = 1,
         bias: bool = True,
-        padding_mode: str = 'zeros',
-        init_scale: float = 1.0, 
-        device=None
+        padding_mode: str = "zeros",
+        init_scale: float = 1.0,
+        device=None,
     ) -> None:
         super(FishConv2d, self).__init__(
-            in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, 
-            groups=groups, bias=bias, padding_mode=padding_mode)
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+            padding_mode=padding_mode,
+        )
         self._layer_name = "Conv2d"
 
-        self.k_size = self.kernel_size[0]*self.kernel_size[1]
-        eff_scale = init_scale**(1.0/3)
+        self.k_size = self.kernel_size[0] * self.kernel_size[1]
+        eff_scale = init_scale ** (1.0 / 3)
         self.fishleg_aux = ParameterDict(
             {
-                "L_o": Parameter(torch.eye(out_channels, device=device)*eff_scale),
-                "L_i": Parameter(torch.eye(in_channels, device=device)*eff_scale),
-                "L_k": Parameter(torch.eye(self.k_size, device=device)*eff_scale),
-                "L_b": Parameter(torch.eye(out_channels, device=device)*eff_scale),
+                "L_o": Parameter(torch.eye(out_channels, device=device) * eff_scale),
+                "L_i": Parameter(torch.eye(in_channels, device=device) * eff_scale),
+                "L_k": Parameter(torch.eye(self.k_size, device=device) * eff_scale),
+                "L_b": Parameter(torch.eye(out_channels, device=device) * eff_scale),
             }
         )
 
@@ -246,7 +255,15 @@ class FishConv2d(nn.Conv2d, FishModule):
         tmp = torch.matmul(torch.matmul(tmp, L_o), L_o.T)
         tmp = torch.reshape(tmp, (self.in_channels, self.k_size, self.out_channels))
         tmp = tmp.permute((2, 0, 1))
-        qvW = torch.reshape(tmp, (self.out_channels, self.in_channels, self.kernel_size[0], self.kernel_size[1]))
+        qvW = torch.reshape(
+            tmp,
+            (
+                self.out_channels,
+                self.in_channels,
+                self.kernel_size[0],
+                self.kernel_size[1],
+            ),
+        )
 
         if self.bias:
             b = v[1]
@@ -256,4 +273,4 @@ class FishConv2d(nn.Conv2d, FishModule):
             qvB = torch.reshape(qvB, bs)
             return (qvW, qvB)
         else:
-            return (qvW, )
+            return (qvW,)
