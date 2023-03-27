@@ -83,7 +83,6 @@ class FishLinear(nn.Linear, FishModule):
         in_features: int,
         out_features: int,
         bias: bool = True,
-        init_scale: float = 1.0,
         device=None,
         dtype=None,
     ) -> None:
@@ -94,8 +93,8 @@ class FishLinear(nn.Linear, FishModule):
         self._layer_name = "Linear"
         self.fishleg_aux = ParameterDict(
             {
-                "L": Parameter(torch.eye(in_features + 1) * np.sqrt(init_scale)),
-                "R": Parameter(torch.eye(out_features) * np.sqrt(init_scale)),
+                "L": Parameter(torch.eye(in_features + 1)),
+                "R": Parameter(torch.eye(out_features)),
             }
         )
         mask_L = torch.triu(torch.ones_like(self.fishleg_aux["L"])).to(device)
@@ -105,6 +104,39 @@ class FishLinear(nn.Linear, FishModule):
 
         self.order = ["weight", "bias"]
         self.device = device
+
+    def warmup(
+        self,
+        v: Tuple[Tensor, Tensor] = None,
+        batch_speedup: bool = False,
+        init_scale: float = 1.0,
+    ) -> None:
+        out_features, in_features = self.weight.shape
+        if v is None:
+            if batch_speedup:
+                self.fishleg_aux["R"].data.mul_(np.sqrt(init_scale))
+                self.fishleg_aux["L"].data.mul_(np.sqrt(init_scale))
+            else:
+                D = Parameter(
+                    np.sqrt(init_scale) * torch.ones((out_features, in_features + 1))
+                )
+                D = D.to(self.device)
+                self.fishleg_aux["D"] = D
+        else:
+            D = torch.cat([v[0], v[1][:, None]], dim=-1)
+            if batch_speedup:
+                # nearest Kronecker product, using SVD
+                U, S, Vh = torch.linalg.svd(D, full_matrices=False)
+                self.fishleg_aux["R"].data.copy_(
+                    torch.sqrt(torch.diag(torch.sqrt(S[0]) * U[:, 0]))
+                )
+                self.fishleg_aux["L"].data.copy_(
+                    torch.sqrt(torch.diag(torch.sqrt(S[0]) * Vh[0, :]))
+                )
+            else:
+                D = Parameter(torch.sqrt(D))
+                D.to(self.device)
+                self.fishleg_aux["D"] = D
 
     def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         """For fully-connected layers, the default structure of :math:`Q` as a
@@ -119,10 +151,11 @@ class FishLinear(nn.Linear, FishModule):
         are represented by the matrices :math:`L_l, R_l`.
 
         """
-        L = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["L"]
-        R = torch.sqrt(self.fishleg_aux["scale"]) * self.fishleg_aux["R"]
-        # print("u", v[0].shape, v[1][:, None].shape)
-        u = torch.cat([v[0], v[1][:, None]], dim=-1)
+        L = self.fishleg_aux["L"]
+        R = self.fishleg_aux["R"]
+        u = torch.square(self.fishleg_aux["D"]) * torch.cat(
+            [v[0], v[1][:, None]], dim=-1
+        )
         z = torch.linalg.multi_dot((R.T, R, u, L, L.T))
         return (z[:, :-1], z[:, -1])
 
