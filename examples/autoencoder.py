@@ -274,7 +274,7 @@ def read_data_sets(name_dataset, home_path, if_autoencoder=True):
 if __name__ == "__main__":
 
     argparser = argparse.ArgumentParser()
-    argparser.add_argument("--exp", type=str, help="which dataset", default="FACES")
+    argparser.add_argument("--exp", type=str, help="which dataset", default="MNIST")
     args = argparser.parse_args()
 
     seed = 13
@@ -305,13 +305,20 @@ if __name__ == "__main__":
     if args.exp == "MNIST":
         batch_size = 100
         epochs = 10
-        eta_adam = 1e-4
-        eta_fl = 0.02
-        eta_sgd = 0.03
-        aux_eta = 2e-3
-        weight_decay = 1e-5
+        fish_lr = 0.02
         beta = 0.9
+        weight_decay = 1e-5
+        update_aux_every = 10
+        aux_lr = 2e-3
+        aux_eps = 1e-8
         damping = 0.3
+        pre_aux_training = 10
+        scale = 1
+        initialization = "normal"
+        normalization = True
+        batch_speedup = False
+        fine_tune = False
+        warmup = 0
 
         dataset = read_data_sets("MNIST", "../data/", if_autoencoder=True)
 
@@ -398,7 +405,7 @@ if __name__ == "__main__":
 
     model_adam = copy.deepcopy(model)
 
-    print("lr fl={}, lr sgd={}, lr aux={}".format(eta_fl, eta_sgd, aux_eta))
+    # print("lr fl={}, lr sgd={}, lr aux={}".format(eta_fl, eta_sgd, aux_eta))
 
     opt = FishLeg(
         model,
@@ -406,29 +413,30 @@ if __name__ == "__main__":
         nll,
         aux_loader,
         likelihood,
-        fish_lr=eta_fl,
+        fish_lr=fish_lr,
         beta=beta,
-        weight_decay=1e-5,
-        update_aux_every=10,
-        aux_lr=aux_eta,
+        weight_decay=weight_decay,
+        update_aux_every=update_aux_every,
+        aux_lr=aux_lr,
         aux_betas=(0.9, 0.999),
-        aux_eps=1e-8,
+        aux_eps=aux_eps,
         damping=damping,
-        pre_aux_training=0,
-        sgd_lr=eta_sgd,
-        initialization="normal",
+        pre_aux_training=pre_aux_training,
+        initialization=initialization,
         device=device,
-        batch_speedup=False
+        batch_speedup=batch_speedup,
+        scale=scale,
     )
 
     print(opt.__dict__["fish_lr"])
     print(opt.__dict__["beta"])
     print(opt.__dict__["aux_lr"])
     print(opt.__dict__["damping"])
-    print(opt.__dict__["sgd_lr"])
+    print(opt.__dict__["scale"])
 
     FL_time = []
     LOSS = []
+    AUX_LOSS = []
     TEST_LOSS = []
     st = time.time()
     iteration = 0
@@ -445,6 +453,7 @@ if __name__ == "__main__":
             if n % 50 == 0:
                 FL_time.append(time.time() - st)
                 LOSS.append(loss.detach().cpu().numpy())
+                AUX_LOSS.append(opt.aux_loss)
 
                 test_batch_data, test_batch_labels = next(iter(test_loader))
                 test_batch_data, test_batch_labels = test_batch_data.to(
@@ -454,7 +463,7 @@ if __name__ == "__main__":
 
                 TEST_LOSS.append(test_loss.detach().cpu().numpy())
 
-                print(n, LOSS[-1], TEST_LOSS[-1])
+                print(n, LOSS[-1], AUX_LOSS[-1], TEST_LOSS[-1])
 
     fig, axs = plt.subplots(1, 2, figsize=(10, 5))
     axs[0].plot(FL_time, LOSS, label="Fishleg")  # color=colors_group[i])

@@ -146,6 +146,7 @@ class FishLeg(Optimizer):
         self.likelihood = likelihood
         self.warmup = warmup
         self.scale = scale
+        self.aux_lr = aux_lr
 
         self.draw = draw
         self.nll = nll
@@ -233,6 +234,20 @@ class FishLeg(Optimizer):
                                 module.weight.data.zero_()
                                 module.bias.data.zero_()
                             recursive_setattr(model, name, replace)
+                    elif isinstance(module, nn.Conv2d):
+                        replace = FishConv2d(
+                            in_channels=module.in_channels,
+                            out_channels=module.out_channels,
+                            kernel_size=module.kernel_size,
+                            stride=module.stride,
+                            padding=module.padding,
+                            dilation=module.dilation,
+                            groups=module.groups,
+                            bias=(module.bias is not None),
+                            padding_mode=module.padding_mode,
+                            device=self.device
+                            # TODO: deal with dtype and device?
+                        )
             except KeyError:
                 pass
         # Define each modules
