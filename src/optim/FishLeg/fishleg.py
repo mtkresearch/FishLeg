@@ -146,6 +146,7 @@ class FishLeg(Optimizer):
         self.likelihood = likelihood
         self.warmup = warmup
         self.scale = scale
+        self.aux_lr = aux_lr
 
         self.draw = draw
         self.nll = nll
@@ -244,7 +245,6 @@ class FishLeg(Optimizer):
                             groups=module.groups,
                             bias=(module.bias is not None),
                             padding_mode=module.padding_mode,
-                            init_scale=self.sgd_lr / self.lr,
                             device=self.device
                             # TODO: deal with dtype and device?
                         )
