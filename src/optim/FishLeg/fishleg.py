@@ -2,17 +2,10 @@ from typing import Tuple, Callable, Any, Union, List
 from collections.abc import Mapping
 import torch
 import torch.nn as nn
-import copy
 import numpy as np
 from torch.nn import init
 from torch.optim import Optimizer, Adam
-from torch.optim.lr_scheduler import LinearLR, _LRScheduler
 import sys
-
-try:
-    from torch.optim.optimizer import _use_grad_for_differentiable
-except ImportError:
-    from .utils import _use_grad_for_differentiable
 
 from .utils import recursive_setattr, recursive_getattr, update_dict
 from transformers import get_scheduler
