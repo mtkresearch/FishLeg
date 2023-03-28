@@ -233,6 +233,7 @@ class FishLeg(Optimizer):
                             elif self.initialization == 'zero':
                                 # fill with zeros for adapters
                                 module.weight.data.zero_()
+                                module.bias.data.zero_()
                             recursive_setattr(model, name, replace)
             except KeyError:
                 pass    
@@ -352,22 +353,21 @@ class FishLeg(Optimizer):
             self._store_u(new = True)
 
             if difference:
+                self.zero_grad()
                 batch = next(iter(dataloader))
                 batch = self._prepare_input(batch)
                 loss(self.model, batch).backward()
                 self._store_u(alpha = -1.)
 
-            aux_loss, linear_term, quad_term, reg_term, g2 = self.update_aux()
-            
+            info = self.update_aux()
+            aux_loss = info[0].detach().cpu().numpy()
+            aux_losses.append(aux_loss)
+
             if verbose:
-                aux_loss = aux_loss.detach().cpu().numpy()
                 aux += aux_loss
-                aux_losses.append(aux_loss)
                 if pre % 20 == 0:
-                    print(pre, aux/20, linear_term.detach().cpu().numpy(),
-                                    quad_term.detach().cpu().numpy(),
-                                    reg_term.detach().cpu().numpy(),
-                                    g2.detach().cpu().numpy())
+                    info = [np.round(e.detach().cpu().numpy(),2) for e in info[1:]]
+                    print(pre, aux/20, *info)
                     aux = 0
         return aux_losses
 
@@ -417,7 +417,7 @@ class FishLeg(Optimizer):
         with torch.no_grad():
             samples = self.draw(self.model, data)
         
-        if self.normalization:
+        if True:
             g2 = 0.0
             for group in self.param_groups:
                 for p in group["params"]:
@@ -459,7 +459,7 @@ class FishLeg(Optimizer):
         
         self.store_g = True
         return aux_loss, linear_term, quad_term, reg_term, g2
-    
+
     def step(self) -> None:
         """Performes a single optimization step of FishLeg."""
         self.updated = False
