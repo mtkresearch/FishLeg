@@ -133,7 +133,7 @@ class FishLinear(nn.Linear, FishModule):
                 self.fishleg_aux["L"].data.copy_(torch.sqrt(torch.diag(torch.sqrt(S[0]) * Vh[0,:])))
             else:
                 D = Parameter(torch.sqrt(D))
-                D.to(self.device)
+                D = D.to(self.device)
                 self.fishleg_aux["D"] = D
 
     def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
