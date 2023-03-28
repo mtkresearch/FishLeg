@@ -130,18 +130,18 @@ class FishLeg(Optimizer):
         pre_aux_training: int = 10,
         differentiable: bool = False,
         scale: float = 1e-2,
-        initialization: str = 'uniform',
+        initialization: str = "uniform",
         device: str = "cpu",
-        num_steps = None,
-        para_name: str = '',
+        num_steps=None,
+        para_name: str = "",
         normalization: bool = False,
         batch_speedup: bool = False,
         fine_tune: bool = False,
         warmup: int = 0,
         warmup_data: torch.utils.data.DataLoader = None,
-        warmup_loss: Callable = None
+        warmup_loss: Callable = None,
     ) -> None:
-        
+
         self.model = model
         self.fish_lr = fish_lr
         self.device = device
@@ -157,7 +157,7 @@ class FishLeg(Optimizer):
         self.draw = draw
         self.nll = nll
         self.aux_dataloader = aux_dataloader
-        
+
         self.model, param_groups = self.init_model_aux(model)
         self.model.to(device)
         defaults = dict(lr=aux_lr, fish_lr=fish_lr, differentiable=differentiable)
@@ -169,15 +169,11 @@ class FishLeg(Optimizer):
             self.warmup_aux(scale=scale)
 
         aux_param = [
-            param
-            for name, param in model.named_parameters()
-            if "fishleg_aux" in name
+            param for name, param in model.named_parameters() if "fishleg_aux" in name
         ]
 
-        if len(self.likelihood.get_parameters())>0:
-            aux_param.extend(
-                self.likelihood.get_aux_parameters()
-            )
+        if len(self.likelihood.get_parameters()) > 0:
+            aux_param.extend(self.likelihood.get_aux_parameters())
         self.aux_opt = Adam(
             aux_param,
             lr=aux_lr,
@@ -188,13 +184,14 @@ class FishLeg(Optimizer):
 
         if num_steps is not None:
             self.aux_scheduler = get_scheduler(
-                name='linear', optimizer=self.aux_opt,
+                name="linear",
+                optimizer=self.aux_opt,
                 num_warmup_steps=0,
-                num_training_steps=num_steps
+                num_training_steps=num_steps,
             )
-        else: 
+        else:
             self.aux_scheduler = None
-        
+
         self.update_aux_every = update_aux_every
         self.damping = damping
         self.weight_decay = weight_decay
@@ -204,9 +201,9 @@ class FishLeg(Optimizer):
         self.store_g = True
 
     def init_model_aux(
-            self, 
-            model: nn.Module,
-        ) -> [nn.Module, List]:
+        self,
+        model: nn.Module,
+    ) -> Union[nn.Module, List]:
         """Given a model to optimize, parameters can be devided to
 
         #. those fixed as pre-trained.
@@ -234,15 +231,17 @@ class FishLeg(Optimizer):
                                 device=self.device,
                             )
                             replace = update_dict(replace, module)
-                            if self.initialization == 'normal':
-                                init.normal_(replace.weight,0,1/np.sqrt(module.in_features)) 
-                            elif self.initialization == 'zero':
+                            if self.initialization == "normal":
+                                init.normal_(
+                                    replace.weight, 0, 1 / np.sqrt(module.in_features)
+                                )
+                            elif self.initialization == "zero":
                                 # fill with zeros for adapters
                                 module.weight.data.zero_()
                                 module.bias.data.zero_()
                             recursive_setattr(model, name, replace)
             except KeyError:
-                pass    
+                pass
         # Define each modules
         param_groups = []
         for module_name, module in model.named_modules():
@@ -258,16 +257,12 @@ class FishLeg(Optimizer):
                     "gradbar": [
                         torch.zeros_like(params[name]) for name in module.order
                     ],
-                    "theta0": [
-                        params[name].clone() for name in module.order
-                    ],
-                    "grad": [
-                        torch.zeros_like(params[name]) for name in module.order
-                    ],
+                    "theta0": [params[name].clone() for name in module.order],
+                    "grad": [torch.zeros_like(params[name]) for name in module.order],
                     "Qv": module.Qg if self.batch_speedup else module.Qv,
                     "order": module.order,
                     "name": module_name,
-                    "module": module
+                    "module": module,
                 }
                 param_groups.append(g)
 
@@ -278,36 +273,30 @@ class FishLeg(Optimizer):
 
         likelihood_params = self.likelihood.get_parameters()
         if len(likelihood_params) > 0:
-            self.likelihood.init_aux(
-                init_scale=self.scale
-            )
+            self.likelihood.init_aux(init_scale=self.scale)
             g = {
                 "params": likelihood_params,
-                "gradbar": [
-                        torch.zeros_like(p) for p in likelihood_params
-                ],
-                "theta0": [
-                        p.clone() for p in likelihood_params
-                    ],
-                "grad": [
-                        torch.zeros_like(p) for p in likelihood_params
-                ],
+                "gradbar": [torch.zeros_like(p) for p in likelihood_params],
+                "theta0": [p.clone() for p in likelihood_params],
+                "grad": [torch.zeros_like(p) for p in likelihood_params],
                 "Qv": self.likelihood.Qv,
                 "order": self.likelihood.order,
-                "name": 'likelihood'
+                "name": "likelihood",
             }
             param_groups.append(g)
-        
+
         # TODO: The above may not be a very "correct" way to do this, so please feel free to change, for example, we may want to check the name is in the fish_layer keys before attempting what is in the try statement.
         # TODO: Error checking to check that model includes some auxiliary arguments.
-        
+
         return model, param_groups
-    
+
     def warmup_aux(
-            self,
-            dataloader: torch.utils.data.DataLoader = None,
-            loss: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor] = None,
-            scale: float = 1e-4
+        self,
+        dataloader: torch.utils.data.DataLoader = None,
+        loss: Callable[
+            [nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor
+        ] = None,
+        scale: float = 1e-4,
     ) -> None:
         """Warm up auxilirary parameters,
         if warmup is larger zero, follow approxiamte Adam,
@@ -317,36 +306,33 @@ class FishLeg(Optimizer):
         if self.warmup > 0:
             for _ in range(0, self.warmup, dataloader.batch_size):
 
-                data = self._prepare_input(next(iter(dataoader)))
-                loss(model, data).backward()
-                self._store_u(transform=lambda x: x*x)
-        
+                data = self._prepare_input(next(iter(dataloader)))
+                loss(self.model, data).backward()
+                self._store_u(transform=lambda x: x * x)
+
         for group in self.param_groups:
-            
+
             if self.warmup > 0:
                 ds = []
-                for i,g2 in enumerate(group['grad']):
+                for i, g2 in enumerate(group["grad"]):
                     g2_avg = g2[i] / self.warmup
-                    ds.append( scale / (1e-8 + torch.sqrt(g2_avg)))
-            
-                group['module'].warmup(
-                        ds,
-                        batch_speedup=self.batch_speedup,
-                        init_scale=scale
-                    )
+                    ds.append(scale / (1e-8 + torch.sqrt(g2_avg)))
+
+                group["module"].warmup(
+                    ds, batch_speedup=self.batch_speedup, init_scale=scale
+                )
             else:
-                group['module'].warmup(
-                        batch_speedup=self.batch_speedup,
-                        init_scale=scale
-                    )
+                group["module"].warmup(
+                    batch_speedup=self.batch_speedup, init_scale=scale
+                )
 
     def pretrain_fish(
-            self,
-            steps,
-            dataloader: torch.utils.data.DataLoader,
-            loss: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
-            difference: bool = False,
-            verbose: bool = False
+        self,
+        steps,
+        dataloader: torch.utils.data.DataLoader,
+        loss: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
+        difference: bool = False,
+        verbose: bool = False,
     ) -> List:
 
         aux_losses = []
@@ -356,14 +342,14 @@ class FishLeg(Optimizer):
             batch = next(iter(dataloader))
             batch = self._prepare_input(batch)
             loss(self.model, batch).backward()
-            self._store_u(new = True)
+            self._store_u(new=True)
 
             if difference:
                 self.zero_grad()
                 batch = next(iter(dataloader))
                 batch = self._prepare_input(batch)
                 loss(self.model, batch).backward()
-                self._store_u(alpha = -1.)
+                self._store_u(alpha=-1.0)
 
             info = self.update_aux()
             aux_loss = info[0].detach().cpu().numpy()
@@ -372,27 +358,25 @@ class FishLeg(Optimizer):
             if verbose:
                 aux += aux_loss
                 if pre % 20 == 0:
-                    info = [np.round(e.detach().cpu().numpy(),2) for e in info[1:]]
-                    print(pre, aux/20, *info)
+                    info = [np.round(e.detach().cpu().numpy(), 2) for e in info[1:]]
+                    print(pre, aux / 20, *info)
                     aux = 0
         return aux_losses
 
     def _store_u(
-        self,
-        transform: Callable = lambda x: x,
-        alpha: float = 1.,
-        new: bool = False
+        self, transform: Callable = lambda x: x, alpha: float = 1.0, new: bool = False
     ):
         for group in self.param_groups:
-            for i,p in enumerate(group['params']):
+            for i, p in enumerate(group["params"]):
                 grad = transform(p.grad.data)
                 if not new:
-                    group['grad'][i].add_(grad, alpha=alpha)
+                    group["grad"][i].add_(grad, alpha=alpha)
                 else:
-                    group['grad'][i].copy_(grad)
+                    group["grad"][i].copy_(grad)
 
-
-    def _prepare_input(self, data: Union[torch.Tensor, Any]) -> Union[torch.Tensor, Any]:
+    def _prepare_input(
+        self, data: Union[torch.Tensor, Any]
+    ) -> Union[torch.Tensor, Any]:
         """
         Prepares one `data` before feeding it to the model, be it a tensor or a nested list/dictionary of tensors.
         """
@@ -415,21 +399,21 @@ class FishLeg(Optimizer):
         where :math:`\\theta` is the parameters of model, :math:`\lambda` is the
         auxliarary parameters.
         """
-        self.store_g = False 
+        self.store_g = False
         data = next(iter(self.aux_dataloader))
         data = self._prepare_input(data)
 
         self.aux_opt.zero_grad()
         with torch.no_grad():
             samples = self.draw(self.model, data)
-        
+
         if True:
             g2 = 0.0
             for group in self.param_groups:
                 for p in group["params"]:
                     grad = p.grad.data
                     g2 = g2 + torch.sum(grad * grad)
-            g_norm = torch.sqrt(g2) 
+            g_norm = torch.sqrt(g2)
 
         self.zero_grad()
         self.nll(self.model, samples).backward()
@@ -439,12 +423,9 @@ class FishLeg(Optimizer):
         linear_term = 0.0
 
         for group in self.param_groups:
-            qg = group["Qv"]() if self.batch_speedup \
-                 else group["Qv"](group['grad'])
+            qg = group["Qv"]() if self.batch_speedup else group["Qv"](group["grad"])
 
-            for p, g, d_p in zip(
-                group['params'], group['grad'], qg
-            ):
+            for p, g, d_p in zip(group["params"], group["grad"], qg):
 
             for p, g, d_p in zip(group["params"], group["grad"], qg):
                 grad = p.grad.data
@@ -456,14 +437,14 @@ class FishLeg(Optimizer):
 
         aux_loss = 0.5 * (reg_term + quad_term) - linear_term
         if self.normalization:
-            aux_loss = aux_loss/g2
-        
-        aux_loss.backward() 
+            aux_loss = aux_loss / g2
+
+        aux_loss.backward()
         self.aux_loss = aux_loss.item()
         self.aux_opt.step()
         if self.aux_scheduler is not None:
             self.aux_scheduler.step()
-        
+
         self.store_g = True
         return aux_loss, linear_term, quad_term, reg_term, g2
 
@@ -472,11 +453,11 @@ class FishLeg(Optimizer):
         self.updated = False
         if self.update_aux_every > 0:
             if self.step_t % self.update_aux_every == 0:
-                self._store_u(new = True)
+                self._store_u(new=True)
                 aux_loss, linear_term, quad_term, reg_term, g2 = self.update_aux()
                 self.updated = True
         elif self.update_aux_every < 0:
-            self._store_u(new = True)
+            self._store_u(new=True)
             for _ in range(-self.update_aux_every):
                 self.update_aux()
             self.updated = True
@@ -486,9 +467,15 @@ class FishLeg(Optimizer):
         for group in self.param_groups:
             name = group["name"]
             with torch.no_grad():
-                nat_grad = group["Qv"]() if self.batch_speedup \
-                           else group["Qv"](group['grad'] if self.updated \
-                                            else [p.grad.data for p in group['params']])
+                nat_grad = (
+                    group["Qv"]()
+                    if self.batch_speedup
+                    else group["Qv"](
+                        group["grad"]
+                        if self.updated
+                        else [p.grad.data for p in group["params"]]
+                    )
+                )
 
                 for p, d_p, gbar, p0 in zip(
                     group["params"], nat_grad, group["gradbar"], group["theta0"]
@@ -497,14 +484,14 @@ class FishLeg(Optimizer):
                     if self.fine_tune:
                         delta = gbar.add(p - p0, alpha=self.weight_decay)
                     else:
-                        delta = gbar.add(p, alpha=self.weight_decay/self.fish_lr)
-                    p.add_(delta, alpha=-self.fish_lr) 
-                    
+                        delta = gbar.add(p, alpha=self.weight_decay / self.fish_lr)
+                    p.add_(delta, alpha=-self.fish_lr)
+
     @torch.no_grad()
     def _save_input(
         self,
         module: torch.nn.Module,
-        input_: list[torch.Tensor],
+        input_: List[torch.Tensor],
     ) -> None:
         if not module.training:
             return
@@ -515,8 +502,8 @@ class FishLeg(Optimizer):
     def _save_grad_output(
         self,
         module: torch.nn.Module,
-        grad_input: Union[tuple[torch.Tensor, ...], torch.Tensor],
-        grad_output: Union[tuple[torch.Tensor, ...], torch.Tensor],
+        grad_input: Union[Tuple[torch.Tensor, ...], torch.Tensor],
+        grad_output: Union[Tuple[torch.Tensor, ...], torch.Tensor],
     ) -> None:
         if not module.training:
             return
