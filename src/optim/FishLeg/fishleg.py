@@ -183,7 +183,7 @@ class FishLeg(Optimizer):
         if num_steps is not None:
             self.aux_scheduler = get_scheduler(
                 name='linear', optimizer=self.aux_opt,
-                num_warmup_steps=0,
+                num_warmup_steps=100,
                 num_training_steps=num_steps
             )
         else: 
@@ -344,7 +344,7 @@ class FishLeg(Optimizer):
     ) -> List:
 
         aux_losses = []
-        aux = 0
+        aux, checks = 0, 0
         for pre in range(steps):
             self.zero_grad()
             batch = next(iter(dataloader))
@@ -361,14 +361,18 @@ class FishLeg(Optimizer):
 
             info = self.update_aux()
             aux_loss = info[0].detach().cpu().numpy()
-            aux_losses.append(aux_loss)
+            check = info[1].detach().cpu().numpy()
+            linear_term = info[2].detach().cpu().numpy()
+            aux_losses.append(aux_loss + 0.5 * linear_term)
 
             if verbose:
-                aux += aux_loss
+                aux += (aux_loss + 0.5 * linear_term)
+                checks += check
                 if pre % 20 == 0:
-                    info = [np.round(e.detach().cpu().numpy(),2) for e in info[1:]]
-                    print(pre, aux/20, *info)
+                    info = [np.round(e.detach().cpu().numpy(),2) for e in info]
+                    print(pre, aux/20, checks/20, *info)
                     aux = 0
+                    checks = 0
         return aux_losses
 
     def _store_u(
@@ -420,8 +424,7 @@ class FishLeg(Optimizer):
         if True:
             g2 = 0.0
             for group in self.param_groups:
-                for p in group["params"]:
-                    grad = p.grad.data
+                for grad in group["grad"]:
                     g2 = g2 + torch.sum(grad * grad)
             g_norm = torch.sqrt(g2) 
 
@@ -431,6 +434,7 @@ class FishLeg(Optimizer):
         reg_term = 0.0
         quad_term = 0.0
         linear_term = 0.0
+        align = 0.0
 
         for group in self.param_groups:
             qg = group["Qv"]() if self.batch_speedup \
@@ -444,10 +448,13 @@ class FishLeg(Optimizer):
                 quad_term = quad_term + torch.sum(grad * d_p)
                 linear_term = linear_term + torch.sum(g * d_p)
                 reg_term = reg_term + self.damping * torch.sum(d_p * d_p)
+                align = align + torch.sum(grad * g)
         
+        check = align * quad_term + self.damping * linear_term - g2
         quad_term = quad_term ** 2
 
         aux_loss = 0.5 * (reg_term + quad_term) - linear_term
+
         if self.normalization:
             aux_loss = aux_loss/g2
         
@@ -458,7 +465,7 @@ class FishLeg(Optimizer):
             self.aux_scheduler.step()
         
         self.store_g = True
-        return aux_loss, linear_term, quad_term, reg_term, g2
+        return aux_loss, check, linear_term, quad_term, reg_term, g2
 
     def step(self) -> None:
         """Performes a single optimization step of FishLeg."""
