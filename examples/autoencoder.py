@@ -305,6 +305,9 @@ if __name__ == "__main__":
     if args.exp == "MNIST":
         batch_size = 100
         epochs = 10
+        
+        eta_adam = 1e-4
+
         fish_lr = 0.02
         beta = 0.9
         weight_decay = 1e-5
