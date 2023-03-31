@@ -344,6 +344,9 @@ class FishLeg(Optimizer):
     ) -> List:
 
         aux_losses = []
+        linear_losses = []
+        quad_losses = []
+        reg_losses = []
         aux = 0
         for pre in range(steps):
             self.zero_grad()
@@ -362,6 +365,9 @@ class FishLeg(Optimizer):
             info = self.update_aux()
             aux_loss = info[0].detach().cpu().numpy()
             aux_losses.append(aux_loss)
+            linear_losses.append(info[1].detach().cpu().numpy())
+            quad_losses.append(info[2].detach().cpu().numpy())
+            reg_losses.append(info[3].detach().cpu().numpy())
 
             if verbose:
                 aux += aux_loss
@@ -369,7 +375,8 @@ class FishLeg(Optimizer):
                     info = [np.round(e.detach().cpu().numpy(), 2) for e in info[1:]]
                     print(pre, aux / 20, *info)
                     aux = 0
-        return aux_losses
+                    print(0.5 * info[0])
+        return aux_losses, linear_losses, quad_losses, reg_losses
 
     def _store_u(
         self, transform: Callable = lambda x: x, alpha: float = 1.0, new: bool = False
