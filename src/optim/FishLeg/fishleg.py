@@ -132,7 +132,7 @@ class FishLeg(Optimizer):
         fine_tune: bool = False,
         warmup: int = 0,
         warmup_data: torch.utils.data.DataLoader = None,
-        warmup_loss: Callable = None,
+        warmup_loss: Callable = None
     ) -> None:
 
         self.model = model
@@ -178,10 +178,9 @@ class FishLeg(Optimizer):
 
         if num_steps is not None:
             self.aux_scheduler = get_scheduler(
-                name="linear",
-                optimizer=self.aux_opt,
-                num_warmup_steps=0,
-                num_training_steps=num_steps,
+                name='linear', optimizer=self.aux_opt,
+                num_warmup_steps=100,
+                num_training_steps=num_steps
             )
         else:
             self.aux_scheduler = None
@@ -346,7 +345,7 @@ class FishLeg(Optimizer):
     ) -> List:
 
         aux_losses = []
-        aux, checks = 0,0
+        aux, checks = 0, 0
         for pre in range(steps):
             self.zero_grad()
             batch = next(iter(dataloader))
@@ -480,25 +479,21 @@ class FishLeg(Optimizer):
                 reg_term = reg_term + self.damping * torch.sum(d_p * d_p)
                 align = align + torch.sum(grad * g)
 
-        check = quad_term * align + self.damping * linear_term - g2
+        check = align * quad_term + self.damping * linear_term - g2
         quad_term = quad_term**2
 
         aux_loss = 0.5 * (reg_term + quad_term) - linear_term
-        
-        #if self.normalization:
-        #    aux_loss = aux_loss / g2
-        #    check = check / g2
-        
-        if train:
-            aux_loss.backward()
-            self.aux_loss = aux_loss.item()
-            self.aux_opt.step()
-            if self.aux_scheduler is not None:
-                self.aux_scheduler.step()
-        
+
         if self.normalization:
             aux_loss = aux_loss / g2
             check = check / g2
+
+        if train:                                                                                                                                                                  
+              aux_loss.backward()                                                                                                                                                    
+              self.aux_loss = aux_loss.item()                                                                                                                                        
+              self.aux_opt.step()                                                                                                                                                    
+              if self.aux_scheduler is not None:                                                                                                                                     
+                  self.aux_scheduler.step() 
 
         self.store_g = True
         return aux_loss, check, linear_term, quad_term, reg_term, g2
