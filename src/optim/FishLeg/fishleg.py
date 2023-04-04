@@ -173,7 +173,7 @@ class FishLeg(Optimizer):
             lr=aux_lr,
             betas=aux_betas,
             eps=aux_eps,
-            weight_decay=1e-5,
+            weight_decay=1e-2,
         )
 
         if num_steps is not None:
@@ -341,10 +341,12 @@ class FishLeg(Optimizer):
         loss: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
         difference: bool = False,
         verbose: bool = False,
+        testloader: torch.utils.data.DataLoader = None,
+        batch_size: int = 500
     ) -> List:
 
         aux_losses = []
-        aux = 0
+        aux, checks = 0,0
         for pre in range(steps):
             self.zero_grad()
             batch = next(iter(dataloader))
@@ -361,26 +363,63 @@ class FishLeg(Optimizer):
 
             info = self.update_aux()
             aux_loss = info[0].detach().cpu().numpy()
-            aux_losses.append(aux_loss)
+            check = info[1].detach().cpu().numpy()
+            linear_term = info[2].detach().cpu().numpy()
+            aux_losses.append(aux_loss + 0.5 * linear_term)
 
             if verbose:
                 aux += aux_loss
-                if pre % 20 == 0:
-                    info = [np.round(e.detach().cpu().numpy(), 2) for e in info[1:]]
-                    print(pre, aux / 20, *info)
+                checks += check
+                if pre % batch_size == 0:
+                    diag = self.param_groups[0]["module"].diagQ()
+                    print(diag)
+                    print([str(e.detach().cpu().numpy()) for e in [diag.mean(), diag.var(), diag.min(), diag.max()]])
+
+
+                    info = [e.detach().cpu().numpy() for e in info]
+                    if testloader is not None:
+                        test_checks = 0
+                        for _ in range(100):
+                            self.zero_grad()
+                            test_batch = next(iter(testloader))
+                            test_batch = self._prepare_input(test_batch)
+                            loss(self.model, test_batch).backward()
+                            self._store_u(new=True)
+                        
+                            if difference:
+                                self.zero_grad()
+                                test_batch = next(iter(testloader))
+                                test_batch = self._prepare_input(test_batch)
+                                loss(self.model, test_batch).backward()
+                                self._store_u(alpha=-1.0)
+
+                            test_info = self.update_aux(train=False)
+                            test_checks += test_info[1].detach().cpu().numpy()
+                            
+                        print("iter:{:d}, \t train:{:.2f} \t test:{:.2f} \t auxloss:{:.2f} check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                                pre, checks / batch_size, test_checks / batch_size, *info))
+                    else:
+                        print("iter:{:d}, \t train:{:.2f} \t auxloss:{:.2f} \check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                                pre, checks / batch_size, *info))
                     aux = 0
+                    checks = 0
+
         return aux_losses
 
     def _store_u(
-        self, transform: Callable = lambda x: x, alpha: float = 1.0, new: bool = False
+            self, transform: Callable = lambda x: x, alpha: float = 1.0, new: bool = False, random: bool = False
     ):
         for group in self.param_groups:
             for i, p in enumerate(group["params"]):
-                grad = transform(p.grad.data)
-                if not new:
-                    group["grad"][i].add_(grad, alpha=alpha)
+                if random:
+                    scale = np.sqrt(np.prod(p.data.shape))
+                    group["grad"][i].copy_(torch.randn_like(p.data)/scale)
                 else:
-                    group["grad"][i].copy_(grad)
+                    grad = transform(p.grad.data)
+                    if not new:
+                        group["grad"][i].add_(grad, alpha=alpha)
+                    else:
+                        group["grad"][i].copy_(grad)
 
     def _prepare_input(
         self, data: Union[torch.Tensor, Any]
@@ -397,7 +436,7 @@ class FishLeg(Optimizer):
             return data.to(**kwargs)
         return data
 
-    def update_aux(self) -> None:
+    def update_aux(self, train=True) -> None:
         """Performs a single auxliarary parameter update
         using Adam. By minimizing the following objective:
 
@@ -418,8 +457,7 @@ class FishLeg(Optimizer):
         if True:
             g2 = 0.0
             for group in self.param_groups:
-                for p in group["params"]:
-                    grad = p.grad.data
+                for grad in group["grad"]:
                     g2 = g2 + torch.sum(grad * grad)
             g_norm = torch.sqrt(g2)
 
@@ -429,6 +467,7 @@ class FishLeg(Optimizer):
         reg_term = 0.0
         quad_term = 0.0
         linear_term = 0.0
+        align = 0.0
 
         for group in self.param_groups:
             qg = group["Qv"]() if self.batch_speedup else group["Qv"](group["grad"])
@@ -439,21 +478,30 @@ class FishLeg(Optimizer):
                 quad_term = quad_term + torch.sum(grad * d_p)
                 linear_term = linear_term + torch.sum(g * d_p)
                 reg_term = reg_term + self.damping * torch.sum(d_p * d_p)
+                align = align + torch.sum(grad * g)
 
+        check = quad_term * align + self.damping * linear_term - g2
         quad_term = quad_term**2
 
         aux_loss = 0.5 * (reg_term + quad_term) - linear_term
+        
+        #if self.normalization:
+        #    aux_loss = aux_loss / g2
+        #    check = check / g2
+        
+        if train:
+            aux_loss.backward()
+            self.aux_loss = aux_loss.item()
+            self.aux_opt.step()
+            if self.aux_scheduler is not None:
+                self.aux_scheduler.step()
+        
         if self.normalization:
             aux_loss = aux_loss / g2
-
-        aux_loss.backward()
-        self.aux_loss = aux_loss.item()
-        self.aux_opt.step()
-        if self.aux_scheduler is not None:
-            self.aux_scheduler.step()
+            check = check / g2
 
         self.store_g = True
-        return aux_loss, linear_term, quad_term, reg_term, g2
+        return aux_loss, check, linear_term, quad_term, reg_term, g2
 
     def step(self) -> None:
         """Performes a single optimization step of FishLeg."""
