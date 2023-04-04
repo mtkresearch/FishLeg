@@ -181,7 +181,12 @@ class FishLinear(nn.Linear, FishModule):
         """
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
-        return torch.kron(torch.sum(R * R, axis=1), torch.sum(L * L, axis=1))
+        diag = torch.kron(torch.sum(L * L, dim=0), torch.sum(R * R, dim=0))
+        if "D" not in self.fishleg_aux:
+            return diag
+        else:
+            print('used D')
+            return diag * torch.square(self.fishleg_aux["D"].T).reshape(-1)
 
     def save_layer_input(self, input_: List[Tensor]) -> None:
         a = input_[0].to(self.device).clone()
