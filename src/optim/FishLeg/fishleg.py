@@ -165,7 +165,6 @@ class FishLeg(Optimizer):
         aux_param = [
             param for name, param in model.named_parameters() if "fishleg_aux" in name
         ]
-
         if len(self.likelihood.get_parameters()) > 0:
             aux_param.extend(self.likelihood.get_aux_parameters())
         self.aux_opt = Adam(
@@ -351,14 +350,16 @@ class FishLeg(Optimizer):
             batch = next(iter(dataloader))
             batch = self._prepare_input(batch)
             loss(self.model, batch).backward()
-            self._store_u(new=True)
-
+            self._store_u(add_noise=True)
+            #self._store_u(new=True)
+            
             if difference:
                 self.zero_grad()
                 batch = next(iter(dataloader))
                 batch = self._prepare_input(batch)
                 loss(self.model, batch).backward()
                 self._store_u(alpha=-1.0)
+                self._store_u(add_noise=True)
 
             info = self.update_aux()
             aux_loss = info[0].detach().cpu().numpy()
@@ -383,7 +384,8 @@ class FishLeg(Optimizer):
                             test_batch = next(iter(testloader))
                             test_batch = self._prepare_input(test_batch)
                             loss(self.model, test_batch).backward()
-                            self._store_u(new=True)
+                            self._store_u(add_noise=True)
+                            #self._store_u(new=True)
                         
                             if difference:
                                 self.zero_grad()
@@ -391,6 +393,7 @@ class FishLeg(Optimizer):
                                 test_batch = self._prepare_input(test_batch)
                                 loss(self.model, test_batch).backward()
                                 self._store_u(alpha=-1.0)
+                                self._store_u(add_noise=True)
 
                             test_info = self.update_aux(train=False)
                             test_checks += test_info[1].detach().cpu().numpy()
@@ -406,13 +409,13 @@ class FishLeg(Optimizer):
         return aux_losses
 
     def _store_u(
-            self, transform: Callable = lambda x: x, alpha: float = 1.0, new: bool = False, random: bool = False
+            self, transform: Callable = lambda x: x, alpha: float = 1.0, new: bool = False, add_noise: bool = False
     ):
         for group in self.param_groups:
             for i, p in enumerate(group["params"]):
-                if random:
-                    scale = np.sqrt(np.prod(p.data.shape))
-                    group["grad"][i].copy_(torch.randn_like(p.data)/scale)
+                if add_noise:
+                    scale = torch.sqrt(p.grad.data.var())
+                    group["grad"][i].copy_(torch.randn_like(p.data)*scale)
                 else:
                     grad = transform(p.grad.data)
                     if not new:
@@ -468,10 +471,10 @@ class FishLeg(Optimizer):
         linear_term = 0.0
         align = 0.0
 
-        for group in self.param_groups:
+        for i,group in enumerate(self.param_groups):
             qg = group["Qv"]() if self.batch_speedup else group["Qv"](group["grad"])
 
-            for p, g, d_p in zip(group["params"], group["grad"], qg):
+            for p, g, d_p, para_name in zip(group["params"], group["grad"], qg, group["order"]):
 
             for p, g, d_p in zip(group["params"], group["grad"], qg):
                 grad = p.grad.data
@@ -500,6 +503,13 @@ class FishLeg(Optimizer):
             aux_loss = aux_loss / g2
             check = check / g2
 
+        if train:                                                                                                                                                                  
+              aux_loss.backward()
+              self.aux_loss = aux_loss.item()
+              self.aux_opt.step()
+              if self.aux_scheduler is not None:
+                  self.aux_scheduler.step() 
+        
         self.store_g = True
         return aux_loss, check, linear_term, quad_term, reg_term, g2
 

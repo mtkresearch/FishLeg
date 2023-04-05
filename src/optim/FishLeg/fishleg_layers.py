@@ -185,7 +185,6 @@ class FishLinear(nn.Linear, FishModule):
         if "D" not in self.fishleg_aux:
             return diag
         else:
-            print('used D')
             return diag * torch.square(self.fishleg_aux["D"].T).reshape(-1)
 
     def save_layer_input(self, input_: List[Tensor]) -> None:
