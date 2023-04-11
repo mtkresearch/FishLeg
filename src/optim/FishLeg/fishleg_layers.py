@@ -95,6 +95,8 @@ class FishLinear(nn.Linear, FishModule):
             {
                 "L": Parameter(torch.eye(in_features + 1)),
                 "R": Parameter(torch.eye(out_features)),
+                "A": Parameter(torch.ones(out_features, in_features+1)),
+                "D": Parameter(torch.ones(out_features, in_features+1))
             }
         )
         mask_L = torch.triu(torch.ones_like(self.fishleg_aux["L"])).to(device)
@@ -117,11 +119,7 @@ class FishLinear(nn.Linear, FishModule):
                 self.fishleg_aux["R"].data.mul_(np.sqrt(init_scale))
                 self.fishleg_aux["L"].data.mul_(np.sqrt(init_scale))
             else:
-                D = Parameter(
-                    np.sqrt(init_scale) * torch.ones((out_features, in_features + 1))
-                )
-                D = D.to(self.device)
-                self.fishleg_aux["D"] = D
+                self.fishleg_aux["D"].data.mul_(np.sqrt(init_scale))
         else:
             D = torch.cat([v[0], v[1][:, None]], dim=-1)
             if batch_speedup:
@@ -134,30 +132,43 @@ class FishLinear(nn.Linear, FishModule):
                     torch.sqrt(torch.diag(torch.sqrt(S[0]) * Vh[0, :]))
                 )
             else:
-                D = Parameter(torch.sqrt(D))
-                D = D.to(self.device)
-                self.fishleg_aux["D"] = D
-
-    def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
+                self.fishleg_aux["D"].data.copy_(D)
+    
+    def Qv(self, v: Tuple[Tensor, Tensor], full: bool = False) -> Tuple[Tensor, Tensor]:
         """For fully-connected layers, the default structure of :math:`Q` as a
         block-diaglonal matrix is,
-
         .. math::
                     Q_l = (R_lR_l^T \otimes L_lL_l^T)
-
         where :math:`l` denotes the l-th layer. The matrix :math:`R_l` has size
         :math:`(N_{l-1} + 1) \\times (N_{l-1} + 1)` while the matrix :math:`L_l` has
         size :math:`N_l \\times N_l`. The auxiliarary parameters :math:`\lambda`
-        are represented by the matrices :math:`L_l, R_l`.
+        are represented by the matrices :math:`L_l, R_l`. For a Kronecker form that 
+        introduces full inner and outer diagonal rescaling structure is,
 
+        .. math::
+                    Q_l = A_l(L_l \otimes R_l^T) D_l^2 (L_l^T \otimes R_l) A_l
+
+        where :math:`A_l` and :math:`D_l` are two diagonal matrices of the 
+        appropriate size.
         """
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
-        u = torch.square(self.fishleg_aux["D"]) * torch.cat(
+        u = torch.cat(
             [v[0], v[1][:, None]], dim=-1
         )
-        z = torch.linalg.multi_dot((R.T, R, u, L, L.T))
-        return (z[:, :-1], z[:, -1])
+
+        if not full:
+            u = torch.square(
+                    self.fishleg_aux["D"]
+                ) * u
+            u = torch.linalg.multi_dot((R.T, R, u, L, L.T))
+        else:
+            A = self.fishleg_aux["A"]
+            u = torch.linalg.multi_dot((R, (A * u), L))
+            u = torch.square(self.fishleg_aux["D"]) * u
+            u = A * torch.linalg.multi_dot((R.T, u, L.T))
+        return (u[:, :-1], u[:, -1])
+
 
     def diagQ(self) -> Tensor:
         """The Q matrix defines the inverse fisher approximation as below:
@@ -182,10 +193,9 @@ class FishLinear(nn.Linear, FishModule):
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
         diag = torch.kron(torch.sum(L * L, dim=0), torch.sum(R * R, dim=0))
-        if "D" not in self.fishleg_aux:
-            return diag
-        else:
-            return diag * torch.square(self.fishleg_aux["D"].T).reshape(-1)
+        return diag * \
+                torch.square(self.fishleg_aux["D"].T).reshape(-1) * \
+                torch.square(self.fishleg_aux["A"].T).reshape(-1)
 
     def save_layer_input(self, input_: List[Tensor]) -> None:
         a = input_[0].to(self.device).clone()
