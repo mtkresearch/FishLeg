@@ -6,6 +6,7 @@ import numpy as np
 from torch.nn import init
 from torch.optim import Optimizer, Adam
 import sys
+from functools import partial
 
 from .utils import recursive_setattr, recursive_getattr, update_dict
 from transformers import get_scheduler
@@ -127,6 +128,7 @@ class FishLeg(Optimizer):
         device: str = "cpu",
         num_steps=None,
         para_name: str = "",
+        full: bool = False,
         normalization: bool = False,
         batch_speedup: bool = False,
         fine_tune: bool = False,
@@ -140,6 +142,7 @@ class FishLeg(Optimizer):
         self.device = device
         self.batch_speedup = batch_speedup
         self.para_name = para_name
+        self.full = full
         self.initialization = initialization
         self.normalization = normalization
         self.fine_tune = fine_tune
@@ -147,6 +150,7 @@ class FishLeg(Optimizer):
         self.warmup = warmup
         self.scale = scale
         self.aux_lr = aux_lr
+        self.damping = damping
 
         self.draw = draw
         self.nll = nll
@@ -172,21 +176,21 @@ class FishLeg(Optimizer):
             lr=aux_lr,
             betas=aux_betas,
             eps=aux_eps,
-            weight_decay=1e-2,
+            weight_decay=0,
+            # weight_decay need to be fixed to zero
         )
 
         if num_steps is not None:
             self.aux_scheduler = get_scheduler(
                 name="linear",
                 optimizer=self.aux_opt,
-                num_warmup_steps=100,
+                num_warmup_steps=0,
                 num_training_steps=num_steps,
             )
         else:
             self.aux_scheduler = None
 
         self.update_aux_every = update_aux_every
-        self.damping = damping
         self.weight_decay = weight_decay
         self.beta = beta
         self.pre_aux_training = pre_aux_training
@@ -266,7 +270,9 @@ class FishLeg(Optimizer):
                     ],
                     "theta0": [params[name].clone() for name in module.order],
                     "grad": [torch.zeros_like(params[name]) for name in module.order],
-                    "Qv": module.Qg if self.batch_speedup else module.Qv,
+                    "Qv": module.Qg
+                    if self.batch_speedup
+                    else partial(module.Qv, full=self.full),
                     "order": module.order,
                     "name": module_name,
                     "module": module,
@@ -303,7 +309,7 @@ class FishLeg(Optimizer):
         loss: Callable[
             [nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor
         ] = None,
-        scale: float = 1e-4,
+        scale: float = 1.0,
     ) -> None:
         """Warm up auxilirary parameters,
         if warmup is larger zero, follow approxiamte Adam,
@@ -322,8 +328,8 @@ class FishLeg(Optimizer):
             if self.warmup > 0:
                 ds = []
                 for i, g2 in enumerate(group["grad"]):
-                    g2_avg = g2[i] / self.warmup
-                    ds.append(scale / (1e-8 + torch.sqrt(g2_avg)))
+                    g2_avg = g2 / int(self.warmup / dataloader.batch_size)
+                    ds.append(scale / torch.sqrt(g2_avg + self.damping))
 
                 group["module"].warmup(
                     ds, batch_speedup=self.batch_speedup, init_scale=scale
@@ -335,13 +341,14 @@ class FishLeg(Optimizer):
 
     def pretrain_fish(
         self,
-        steps,
         dataloader: torch.utils.data.DataLoader,
         loss: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
+        iterations: int = 10000,
         difference: bool = False,
         verbose: bool = False,
         testloader: torch.utils.data.DataLoader = None,
         batch_size: int = 500,
+        fisher: bool = True,
     ) -> List:
 
         aux_losses = []
@@ -349,13 +356,12 @@ class FishLeg(Optimizer):
         quad_losses = []
         reg_losses = []
         aux, checks = 0, 0
-        for pre in range(steps):
+        for pre in range(iterations):
             self.zero_grad()
             batch = next(iter(dataloader))
             batch = self._prepare_input(batch)
             loss(self.model, batch).backward()
-            self._store_u(add_noise=True)
-            # self._store_u(new=True)
+            self._store_u(new=True)
 
             if difference:
                 self.zero_grad()
@@ -363,9 +369,8 @@ class FishLeg(Optimizer):
                 batch = self._prepare_input(batch)
                 loss(self.model, batch).backward()
                 self._store_u(alpha=-1.0)
-                self._store_u(add_noise=True)
 
-            info = self.update_aux()
+            info = self.update_aux(fisher=fisher)
             aux_loss = info[0].detach().cpu().numpy()
             linear_losses.append(info[1].detach().cpu().numpy())
             quad_losses.append(info[2].detach().cpu().numpy())
@@ -395,8 +400,7 @@ class FishLeg(Optimizer):
                             test_batch = next(iter(testloader))
                             test_batch = self._prepare_input(test_batch)
                             loss(self.model, test_batch).backward()
-                            self._store_u(add_noise=True)
-                            # self._store_u(new=True)
+                            self._store_u(new=True)
 
                             if difference:
                                 self.zero_grad()
@@ -404,17 +408,13 @@ class FishLeg(Optimizer):
                                 test_batch = self._prepare_input(test_batch)
                                 loss(self.model, test_batch).backward()
                                 self._store_u(alpha=-1.0)
-                                self._store_u(add_noise=True)
 
-                            test_info = self.update_aux(train=False)
+                            test_info = self.update_aux(fisher=fisher, train=False)
                             test_checks += test_info[1].detach().cpu().numpy()
 
                         print(
                             "iter:{:d}, \t train:{:.2f} \t test:{:.2f} \t auxloss:{:.2f} check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                pre,
-                                checks / batch_size,
-                                test_checks / batch_size,
-                                *info,
+                                pre, checks / batch_size, test_checks / 100, *info
                             )
                         )
                     else:
@@ -463,7 +463,7 @@ class FishLeg(Optimizer):
             return data.to(**kwargs)
         return data
 
-    def update_aux(self, train=True) -> None:
+    def update_aux(self, train=True, fisher=True) -> None:
         """Performs a single auxliarary parameter update
         using Adam. By minimizing the following objective:
 
@@ -479,8 +479,10 @@ class FishLeg(Optimizer):
 
         self.aux_opt.zero_grad()
         with torch.no_grad():
-            samples = self.draw(self.model, data)
-
+            if fisher:
+                samples = self.draw(self.model, data)
+            else:
+                samples = data
         if True:
             g2 = 0.0
             for group in self.param_groups:
@@ -534,7 +536,7 @@ class FishLeg(Optimizer):
         if self.update_aux_every > 0:
             if self.step_t % self.update_aux_every == 0:
                 self._store_u(new=True)
-                aux_loss, linear_term, quad_term, reg_term, g2 = self.update_aux()
+                self.update_aux()
                 self.updated = True
         elif self.update_aux_every < 0:
             self._store_u(new=True)
