@@ -39,9 +39,12 @@ class FishLeg(Optimizer):
                 with corresponding size.
     :param FishLikelihood likelihood : a FishLeg likelihood, with Qv method if
                 any parameters are learnable.
-    :param float lr: Learning rate,
+    :param float fish_lr: Learning rate,
                 for the parameters of the input model using FishLeg (default: 1e-2)
-
+    :param float damping: Static damping applied to Fisher matrix, :math:`\gamma`,
+                for stability when FIM becomes near-singular. (default: 5e-1)
+    :param float weight_decay: L2 penalty on weights (default: 1e-5)
+    :param float beta: coefficient for running averages of gradient (default: 0.9)
     :param int update_aux_every: Number of iteration after which an auxiliary
                 update is executed, if negative, then run -update_aux_every auxiliary
                 updates in each outer iteration. (default: 10)
@@ -52,20 +55,27 @@ class FishLeg(Optimizer):
                 (default: (0.9, 0.999))
     :param float aux_eps: Term added to the denominator to improve
                 numerical stability for auxiliary parameters (default: 1e-8)
-    :param int pre_aux_training: Number of auxiliary updates to make before
-                any update of the original parameter. This process intends to approximate
-                the correct Fisher Information matrix during initialization,
-                which is espectially important for fine-tuning of models with pretraining
-    :param bool differentiable: Whether the fused implementation (CUDA only) is used
+    :param bool batch_speedup: Whether to use speed-up Qv product (default: False)
+    :param bool full: Whether to use full inner and outer diagonal rescalling
+                for block Kronecker approximation of Q. (default: True)
+    :param bool normalization: Whether to use normalization on gradients when calculating
+                the auxiliary loss, this is important to learn about curvature even when 
+                gradients are small (default: False)
+    :param bool fine_tune: Whether to use Fisher as preconditioner of pretrained tasks,
+                and fine-tune on a downstream task. If True, Q will be fixed and
+                continual learning will be performed (default: False)
+    :param string para_name: Parameter name which those parameters being fine-tuned
+                should contain. This is particularly required for fine-tuning tasks, where
+                some varaibles are learned with continual learning while other variables
+                are learned with other optimizers. (default: "")
     :param string initialization: Initialization of weights (default: uniform)
-    :param float sgd_lr: Help specify initial scale of the inverse Fisher Information matrix
-                approximation, :math:`\eta`. Make sure that
-
-                .. math::
-                        - \eta_{init} Q(\lambda) grad = - \eta_{sgd} grad
-
-                is hold in the beginning of the optimization.
-                And here :math:`\eta_{init}=\eta_{sgd}/\eta_{fl}`.
+    :param int warmup: If warmup is zero, the default SGD warmup will be used, where Q is
+                initialized as a scaled identity matrix. If warmup is positive, the diagonal
+                of Q will be initialized as :math:`\frac{1}{g^2 + \gamma}`; and in this case,
+                warmup_data and warmup_loss should be provided for sampling of gradients.
+    :param float scale: Help specify initial scale of the inverse Fisher Information matrix
+                approximation. If using SGD warmup we suggest, :math:`\eta=\gamma^{-1}`. If 
+                warmup is positive, scale should be 1. (default: 1)
     :param str device: The device where calculations will be performed using PyTorch Tensors.
 
     Example:
@@ -109,32 +119,36 @@ class FishLeg(Optimizer):
     def __init__(
         self,
         model: nn.Module,
-        draw: Callable[[nn.Module, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-        nll: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
+        draw: Callable[
+                [nn.Module, torch.Tensor], 
+                Tuple[torch.Tensor, torch.Tensor]
+              ],
+        nll: Callable[
+                [nn.Module, 
+                Tuple[torch.Tensor, torch.Tensor]
+                ], torch.Tensor],
         aux_dataloader: torch.utils.data.DataLoader,
         likelihood: FishLikelihood,
         fish_lr: float = 5e-2,
+        damping: float = 5e-1,
         weight_decay: float = 1e-5,
         beta: float = 0.9,
         update_aux_every: int = 10,
         aux_lr: float = 1e-4,
         aux_betas: Tuple[float, float] = (0.9, 0.999),
         aux_eps: float = 1e-8,
-        damping: float = 1e-5,
-        pre_aux_training: int = 10,
-        differentiable: bool = False,
-        scale: float = 1e-2,
-        initialization: str = "uniform",
-        device: str = "cpu",
-        num_steps=None,
-        para_name: str = "",
-        full: bool = False,
-        normalization: bool = False,
+        num_steps = None,
         batch_speedup: bool = False,
+        full: bool = True,
+        normalization: bool = False,
         fine_tune: bool = False,
+        para_name: str = "",
+        initialization: str = "uniform",
+        scale: float = 1.,
         warmup: int = 0,
         warmup_data: torch.utils.data.DataLoader = None,
         warmup_loss: Callable = None
+        device: str = "cpu",
     ) -> None:
 
         self.model = model
@@ -158,7 +172,7 @@ class FishLeg(Optimizer):
 
         self.model, param_groups = self.init_model_aux(model)
         self.model.to(device)
-        defaults = dict(lr=aux_lr, fish_lr=fish_lr, differentiable=differentiable)
+        defaults = dict(lr=aux_lr, fish_lr=fish_lr)
         super(FishLeg, self).__init__(param_groups, defaults)
 
         if self.warmup > 0:
@@ -192,7 +206,6 @@ class FishLeg(Optimizer):
         self.update_aux_every = update_aux_every
         self.weight_decay = weight_decay
         self.beta = beta
-        self.pre_aux_training = pre_aux_training
         self.step_t = 0
         self.store_g = True
 
@@ -340,7 +353,11 @@ class FishLeg(Optimizer):
     def pretrain_fish(
         self,
         dataloader: torch.utils.data.DataLoader,
-        loss: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
+        loss: Callable[[
+                nn.Module, 
+                Tuple[torch.Tensor, 
+                      torch.Tensor]
+                ], torch.Tensor],
         iterations: int = 10000,
         difference: bool = False,
         verbose: bool = False,
@@ -375,10 +392,6 @@ class FishLeg(Optimizer):
                 aux += aux_loss
                 checks += check
                 if pre % batch_size == 0:
-                    diag = self.param_groups[0]["module"].diagQ()
-                    print(diag)
-                    print([str(e.detach().cpu().numpy()) for e in [diag.mean(), diag.var(), diag.min(), diag.max()]])
-
                     info = [e.detach().cpu().numpy() for e in info]
                     if testloader is not None:
                         test_checks = 0
