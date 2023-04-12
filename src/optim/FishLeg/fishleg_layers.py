@@ -46,7 +46,7 @@ class FishModule(nn.Module):
             p.to(device)
 
     @abstractmethod
-    def Qv(self, aux: Dict, v: Tuple[Tensor, ...]) -> Tuple[Tensor, ...]:
+    def Qv(self, aux: Dict, v: Tuple[Tensor, ...], full: bool=Fase) -> Tuple[Tensor, ...]:
         """:math:`Q(\lambda)` is a positive definite matrix which will effectively
         estimate the inverse damped Fisher Information Matrix. Appropriate choices
         for :math:`Q` should take into account the architecture of the model/module.
@@ -62,6 +62,7 @@ class FishModule(nn.Module):
             v: (Tuple[Tensor, ...], required): Values of the original parameters,
                     in an order that align with `self.order`, to multiply with
                     :math:`Q(\lambda)`.
+            full: (bool, optional), whether to use full inner and outer re-scaling
         Returns:
             Tuple[Tensor, ...]: The calculated :math:`Q(\lambda)v` products,
                     in same order with `self.order`.
