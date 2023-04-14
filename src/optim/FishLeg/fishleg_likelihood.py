@@ -45,7 +45,7 @@ class FishLikelihood:
         pass
 
     @abstractmethod
-    def nll(self, observations, preds, **kwargs):
+    def nll(self, preds, observations, **kwargs):
         r"""
         Computes the negative log-likelihood
         :math:`\ell(\theta, \mathcal D)=-\log p(\mathbf y|f(\mathbf x))`
@@ -66,8 +66,15 @@ class FishLikelihood:
         """
         raise NotImplementedError
 
-    def __call__(self, observations, preds, **kwargs):
-        return self.nll(observations, preds, **kwargs)
+    def get_parameters(self) -> List:
+        r"""
+        return a list of learnable parameter.
+
+        """
+        return []
+
+    def __call__(self, preds, observations, **kwargs):
+        return self.nll(preds, observations, **kwargs)
 
 
 class FixedGaussianLikelihood(FishLikelihood):
@@ -91,7 +98,7 @@ class FixedGaussianLikelihood(FishLikelihood):
     def get_variance(self) -> torch.Tensor:
         return self.sigma
 
-    def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
+    def nll(self, preds: torch.Tensor, observations: torch.Tensor) -> torch.Tensor:
         logsigma2 = torch.log(torch.square(self.sigma))
         return (
             0.5
@@ -120,7 +127,7 @@ class GaussianLikelihood(FishLikelihood):
         self.sigma = Parameter(torch.tensor(sigma))
         self.sigma.to(self.device)
 
-    def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
+    def nll(self, preds: torch.Tensor, observations: torch.Tensor) -> torch.Tensor:
         logsigma2 = torch.log(torch.square(self.sigma))
         return (
             0.5
@@ -170,7 +177,7 @@ class BernoulliLikelihood(FishLikelihood):
     def __init__(self, device: str = "cpu") -> None:
         self.device = device
 
-    def nll(self, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
+    def nll(self, preds: torch.Tensor, observations: torch.Tensor) -> torch.Tensor:
         bce = torch.sum(preds * (1.0 - observations) + torch.nn.Softplus()(-preds))
         return bce / preds.shape[0]
 
@@ -182,7 +189,7 @@ class SoftMaxLikelihood(FishLikelihood):
     def __init__(self, device: str = "cpu") -> None:
         self.device = device
 
-    def nll(sef, observations: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
+    def nll(sef, preds: torch.Tensor, observations: torch.Tensor) -> torch.Tensor:
         logits = log_softmax(preds, dim=1)
         return -torch.mean(torch.sum(logits * observations, dim=1))
 
