@@ -322,3 +322,31 @@ class FishConv2d(nn.Conv2d, FishModule):
             return (qvW, qvB)
         else:
             return (qvW,)
+
+    def diagQ(self) -> Tensor:
+        """The Q matrix defines the inverse fisher approximation as below:
+
+        .. math::
+                    Q_l = (R_lR_l^T \otimes L_lL_l^T)
+
+        where :math:`l` denotes the l-th layer. The matrix :math:`R_l` has size
+        :math:`(N_{l-1} + 1) \\times (N_{l-1} + 1)` while the matrix :math:`L_l` has
+        size :math:`N_l \\times N_l`. The auxiliarary parameters :math:`\lambda`
+        are represented by the matrices :math:`L_l, R_l`.
+
+        The diagonal of this matrix is therefore calculated by
+
+        .. math::
+                    \\text{diag}(Q_l) = \\text{diag}(R_l R_l^T) \otimes \\text{diag}(L_l L_l^T)
+
+        where :math:`\\text{diag}` involves summing over the columns of the and :math:`\otimes` remains as
+        the Kronecker product.
+
+        """
+        L_o = self.fishleg_aux["L_o"]
+        L_i = self.fishleg_aux["L_i"]
+        L_k = self.fishleg_aux["L_k"]
+        # L_b = self.fishleg_aux["L_b"]
+
+        diag = torch.kron(torch.sum(L_i * L_i, dim=0), torch.sum(L_o * L_o, dim=0))
+        return torch.kron(torch.sum(L_k * L_k, dim=0), diag)
