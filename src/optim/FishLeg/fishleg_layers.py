@@ -225,11 +225,12 @@ class FishLinear(nn.Linear, FishModule):
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
         diag = torch.kron(torch.sum(L * L, dim=0), torch.sum(R * R, dim=0))
-        return (
+        diag = (
             diag
             * torch.square(self.fishleg_aux["D"].T).reshape(-1)
             * torch.square(self.fishleg_aux["A"].T).reshape(-1)
         )
+        return (diag[: -self.out_features], diag[-self.out_features :])
 
 
 class FishConv2d(nn.Conv2d, FishModule):
