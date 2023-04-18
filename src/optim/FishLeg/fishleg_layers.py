@@ -258,6 +258,7 @@ class FishConv2d(nn.Conv2d, FishModule):
             groups=groups,
             bias=bias,
             padding_mode=padding_mode,
+            device=device,
         )
         self._layer_name = "Conv2d"
 
@@ -274,7 +275,17 @@ class FishConv2d(nn.Conv2d, FishModule):
 
         self.order = ["weight", "bias"] if bias else ["weight"]
 
-    def Qv(self, v: Tuple[Tensor, Optional[Tensor]]) -> Tuple[Tensor, Optional[Tensor]]:
+    def warmup(
+        self,
+        v: Tuple[Tensor, Tensor] = None,
+        batch_speedup: bool = False,
+        init_scale: float = 1.0,
+    ) -> None:
+        pass
+
+    def Qv(
+        self, v: Tuple[Tensor, Optional[Tensor]], full: bool = False
+    ) -> Tuple[Tensor, Optional[Tensor]]:
         """For fully-connected layers, the default structure of :math:`Q` as a
         block-diaglonal matrix is,
         .. math::
@@ -350,4 +361,7 @@ class FishConv2d(nn.Conv2d, FishModule):
         # L_b = self.fishleg_aux["L_b"]
 
         diag = torch.kron(torch.sum(L_i * L_i, dim=0), torch.sum(L_o * L_o, dim=0))
-        return torch.kron(torch.sum(L_k * L_k, dim=0), diag)
+
+        # Add bias diag here!
+
+        return (torch.kron(torch.sum(L_k * L_k, dim=0), diag), 0)

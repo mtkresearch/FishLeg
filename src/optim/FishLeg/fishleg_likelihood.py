@@ -195,6 +195,6 @@ class SoftMaxLikelihood(FishLikelihood):
         return -torch.mean(torch.sum(logits * obs_one_hot, dim=1))
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
-        logits = torch.log(preds)
+        logits = log_softmax(preds, dim=1)
         dense = Categorical(logits=logits).sample()
-        return one_hot(dense, num_classes=logits.shape[-1])
+        return dense

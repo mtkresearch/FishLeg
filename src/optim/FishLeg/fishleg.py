@@ -257,6 +257,8 @@ class FishLeg(Optimizer):
                             device=self.device
                             # TODO: deal with dtype and device?
                         )
+                        replace = update_dict(replace, module)
+                        recursive_setattr(model, name, replace)
             except KeyError:
                 pass
         # Define each modules
