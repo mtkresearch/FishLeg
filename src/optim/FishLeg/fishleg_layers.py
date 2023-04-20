@@ -46,6 +46,14 @@ class FishModule(nn.Module):
         for p in self.fishleg_aux.values:
             p.to(device)
 
+    def warmup(
+        self,
+        v: Tuple[Tensor, Tensor] = None,
+        batch_speedup: bool = False,
+        init_scale: float = 1.0,
+    ):
+        pass
+
     @abstractmethod
     def Qv(
         self, aux: Dict, v: Tuple[Tensor, ...], full: bool = False
