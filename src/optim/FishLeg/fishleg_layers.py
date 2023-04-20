@@ -10,6 +10,7 @@ from typing import Any, List, Dict, Tuple, Callable, Optional
 
 __all__ = [
     "FishLinear",
+    "FishConv2d"
 ]
 
 
