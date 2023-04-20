@@ -6,6 +6,7 @@ import numpy as np
 from torch.nn import init
 from torch.optim import Optimizer, Adam
 import sys
+import regex as re
 from functools import partial
 from transformers.models.bert.modeling_bert import BertAttention
 
@@ -230,9 +231,17 @@ class FishLeg(Optimizer):
         # Add auxiliary parameters
 
         if len(module_names) == 0:
-            module_names = [name for name, module in model.named_modules()]
-        for module_name in module_names:
-            ### TODO: deal with * in module_names
+            fl_names = [name for name, _ in model.named_modules()]
+        else:
+            fl_names = []
+            for name, _ in model.named_modules():
+                if any([
+                    re.match(fish_name + '$', name)
+                    for fish_name in module_names
+                ]):
+                    fl_names.append(name)
+
+        for module_name in fl_names:
             try: 
                 module = recursive_getattr(model, module_name)
                 if any([~p.requires_grad for p in module.parameters()]):
