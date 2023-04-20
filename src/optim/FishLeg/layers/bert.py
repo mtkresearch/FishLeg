@@ -5,7 +5,7 @@ from torch.nn import ParameterDict, Parameter
 from transformers.models.bert.modeling_bert import BertAttention
 from ..fishleg_layers import FishModule
 
-class FishBertAttentionn(BertAttention, FishModule):
+class FishBertAttention(BertAttention, FishModule):
     def __init__(
         self,
         config,
@@ -13,7 +13,7 @@ class FishBertAttentionn(BertAttention, FishModule):
         device = None,
         dtype = None,
     ) -> None:
-        super(FishBertAttentionn, self).__init__(
+        super(FishBertAttention, self).__init__(
             config, position_embedding_type
         )
         self._layer_name = "BertSelfAttention"
@@ -52,7 +52,7 @@ class FishBertAttentionn(BertAttention, FishModule):
             ]
         self.device = device
     
-    def Qv(self, v: List) -> List:
+    def Qv(self, v: List, full=False) -> List:
         Uk = torch.transpose(
                 torch.cat([v[0], v[1][:, None]], dim=-1),
                 -1,-2

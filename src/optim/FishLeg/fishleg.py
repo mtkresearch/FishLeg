@@ -7,10 +7,12 @@ from torch.nn import init
 from torch.optim import Optimizer, Adam
 import sys
 from functools import partial
+from transformers.models.bert.modeling_bert import BertAttention
 
 from .utils import recursive_setattr, recursive_getattr, update_dict
 from transformers import get_scheduler
 
+from layers import *
 from .fishleg_layers import FishLinear, FishConv2d
 from .fishleg_likelihood import FishLikelihood
 
@@ -64,10 +66,8 @@ class FishLeg(Optimizer):
     :param bool fine_tune: Whether to use Fisher as preconditioner of pretrained tasks,
                 and fine-tune on a downstream task. If True, Q will be fixed and
                 continual learning will be performed (default: False)
-    :param string para_name: Parameter name which those parameters being fine-tuned
-                should contain. This is particularly required for fine-tuning tasks, where
-                some varaibles are learned with continual learning while other variables
-                are learned with other optimizers. (default: "")
+    :param List module_names: A List of module names wished to be optimized/pruned by FishLeg. 
+                (default: [], meaning all modules optimized/pruned by FishLeg)
     :param string initialization: Initialization of weights (default: uniform)
     :param int warmup: If warmup is zero, the default SGD warmup will be used, where Q is
                 initialized as a scaled identity matrix. If warmup is positive, the diagonal
@@ -136,19 +136,19 @@ class FishLeg(Optimizer):
         full: bool = True,
         normalization: bool = False,
         fine_tune: bool = False,
-        para_name: str = "",
+        module_names: List[str] = [],
         initialization: str = "uniform",
         scale: float = 1.0,
         warmup: int = 0,
         warmup_data: torch.utils.data.DataLoader = None,
         warmup_loss: Callable = None,
         device: str = "cpu",
+        config = None
     ) -> None:
         self.model = model
         self.fish_lr = fish_lr
         self.device = device
         self.batch_speedup = batch_speedup
-        self.para_name = para_name
         self.full = full
         self.initialization = initialization
         self.normalization = normalization
@@ -163,7 +163,9 @@ class FishLeg(Optimizer):
         self.nll = nll
         self.aux_dataloader = aux_dataloader
 
-        self.model, param_groups = self.init_model_aux(model)
+        self.model, param_groups = self.init_model_aux(
+                                        model, module_names,config
+                                        )
         self.model.to(device)
         defaults = dict(lr=aux_lr, fish_lr=fish_lr)
         super(FishLeg, self).__init__(param_groups, defaults)
@@ -206,6 +208,8 @@ class FishLeg(Optimizer):
     def init_model_aux(
         self,
         model: nn.Module,
+        module_names: List[str],
+        config = None
     ) -> Union[nn.Module, List]:
         """Given a model to optimize, parameters can be devided to
 
@@ -221,30 +225,37 @@ class FishLeg(Optimizer):
         Returns:
             :class:`torch.nn.Module`, the replaced model.
         """
+        if any(['weight' in m for m in module_names]):
+            raise TypeError(f'Parameters to be optimized in FishLeg are considered together in one module, and cannot be optimized individually')
         # Add auxiliary parameters
-        for name, module in model.named_modules():
-            try:
-                if self.para_name in name:
-                    if isinstance(module, nn.Linear):
-                        if any([p.requires_grad for p in module.parameters()]):
-                            replace = FishLinear(
+
+        if len(module_names) == 0:
+            module_names = [name for name, module in model.named_modules()]
+        for module_name in module_names:
+            ### TODO: deal with * in module_names
+            try: 
+                module = recursive_getattr(model, module_name)
+                if any([~p.requires_grad for p in module.parameters()]):
+                    raise TypeError(f'There exists untrainable parameter in the module named {module_name}.')
+                
+                if isinstance(module, nn.Linear):
+                    replace = FishLinear(
                                 module.in_features,
                                 module.out_features,
                                 module.bias is not None,
                                 device=self.device,
                             )
-                            replace = update_dict(replace, module)
-                            if self.initialization == "normal":
-                                init.normal_(
+                    replace = update_dict(replace, module)
+                    if self.initialization == "normal":
+                        init.normal_(
                                     replace.weight, 0, 1 / np.sqrt(module.in_features)
                                 )
-                            elif self.initialization == "zero":
-                                # fill with zeros for adapters
-                                module.weight.data.zero_()
-                                module.bias.data.zero_()
-                            recursive_setattr(model, name, replace)
-                    elif isinstance(module, nn.Conv2d):
-                        replace = FishConv2d(
+                    elif self.initialization == "zero": # fill with zeros for adapters
+                        module.weight.data.zero_()
+                        module.bias.data.zero_()
+                    recursive_setattr(model, module_name, replace)
+                elif isinstance(module, nn.Conv2d):
+                    replace = FishConv2d(
                             in_channels=module.in_channels,
                             out_channels=module.out_channels,
                             kernel_size=module.kernel_size,
@@ -257,24 +268,31 @@ class FishLeg(Optimizer):
                             device=self.device
                             # TODO: deal with dtype and device?
                         )
-            except KeyError:
-                pass
+                    replace = update_dict(replace, module)
+                    recursive_setattr(model, module_name, replace)
+                elif isinstance(module, BertAttention):
+                    replace = FishBertAttention(config, device=self.device)
+                    replace = update_dict(replace, module)
+                    recursive_setattr(model, module_name, replace)
+                else:
+                    raise Warning(f'The FishLayer for module named {module_name} has not been implemented and hence skipped.')
+            except:
+                raise TypeError(f'The given model has no module named {module_name}.')
+        
         # Define each modules
         param_groups = []
-        for module_name, module in model.named_modules():
-            if hasattr(module, "fishleg_aux"):
-                model_module = recursive_getattr(model, module_name)
-                params = {
+        for module_name in module_names:
+            module = recursive_getattr(model, module_name)
+            params = {
                     name: param
-                    for name, param in model_module.named_parameters()
+                    for name, param in module.named_parameters()
                     if "fishleg_aux" not in name
                 }
-                g = {
+            g = {
                     "params": [params[name] for name in module.order],
                     "gradbar": [
                         torch.zeros_like(params[name]) for name in module.order
                     ],
-                    "theta0": [params[name].clone() for name in module.order],
                     "grad": [torch.zeros_like(params[name]) for name in module.order],
                     "Qv": module.Qg
                     if self.batch_speedup
@@ -283,12 +301,18 @@ class FishLeg(Optimizer):
                     "name": module_name,
                     "module": module,
                 }
-                param_groups.append(g)
+            if self.fine_tune:
+                g["theta0"] = [params[name].clone() for name in module.order]
+            param_groups.append(g)
 
-                # Register hooks on trainable modules
-                if self.batch_speedup:
+            # Register hooks on trainable modules
+            if self.batch_speedup:
+                if isinstance(module, FishLinear):
                     module.register_forward_pre_hook(self._save_input)
                     module.register_full_backward_hook(self._save_grad_output)
+                else:
+                    raise NotImplementedError(f'Batch Speedup has not been implemented for module {module_name}')
+            
 
         likelihood_params = self.likelihood.get_parameters()
         if len(likelihood_params) > 0:
@@ -495,7 +519,7 @@ class FishLeg(Optimizer):
         for i, group in enumerate(self.param_groups):
             qg = group["Qv"]() if self.batch_speedup else group["Qv"](group["grad"])
 
-            for p, g, d_p, para_name in zip(
+            for p, g, d_p in zip(
                 group["params"], group["grad"], qg, group["order"]
             ):
                 grad = p.grad.data
