@@ -9,7 +9,7 @@ import sys
 from functools import partial
 from transformers.models.bert.modeling_bert import BertAttention
 
-from .utils import recursive_setattr, recursive_getattr, update_dict, get_named_layers_by_regex
+from .utils import recursive_setattr, recursive_getattr, update_dict, get_named_layers_by_regex, NamedLayer
 from transformers import get_scheduler
 
 from .layers import *
