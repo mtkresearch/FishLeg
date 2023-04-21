@@ -16,8 +16,9 @@ class FishBertAttention(BertAttention, FishModule):
         super(FishBertAttention, self).__init__(
             config, position_embedding_type
         )
+
         self._layer_name = "BertSelfAttention"
-        self.all_head_size, self.hidden_size = self.key.weight.shape
+        self.all_head_size, self.hidden_size = self.self.key.weight.shape
 
         self.fishleg_aux = ParameterDict(
             {
@@ -51,6 +52,7 @@ class FishBertAttention(BertAttention, FishModule):
                 "output.dense.weight", "output.dense.bias"
             ]
         self.device = device
+
     
     def Qv(self, v: List, full=False) -> List:
         Uk = torch.transpose(

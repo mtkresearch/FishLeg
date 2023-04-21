@@ -42,8 +42,7 @@ class FishModule(nn.Module):
         return self._layer_name
 
     def cuda(self, device: str) -> None:
-        super.cuda(device)
-        for p in self.fishleg_aux.values:
+        for p in self.fishleg_aux.values():
             p.to(device)
 
     def warmup(
@@ -84,7 +83,9 @@ class FishModule(nn.Module):
 
 def get_zero_grad_hook(mask: torch.Tensor) -> Callable[[torch.Tensor], torch.Tensor]:
     def hook(grad: torch.Tensor) -> torch.Tensor:
-        return grad * mask.to(grad.get_device())
+        if grad.get_device() >= 0:
+            mask.to(grad.get_device())
+        return grad * mask
 
     return hook
 
