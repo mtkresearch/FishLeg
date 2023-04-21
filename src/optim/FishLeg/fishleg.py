@@ -6,14 +6,13 @@ import numpy as np
 from torch.nn import init
 from torch.optim import Optimizer, Adam
 import sys
-import regex as re
 from functools import partial
 from transformers.models.bert.modeling_bert import BertAttention
 
-from .utils import recursive_setattr, recursive_getattr, update_dict
+from .utils import recursive_setattr, recursive_getattr, update_dict, get_named_layers_by_regex
 from transformers import get_scheduler
 
-from layers import *
+from .layers import *
 from .fishleg_layers import FishLinear, FishConv2d
 from .fishleg_likelihood import FishLikelihood
 
@@ -174,7 +173,6 @@ class FishLeg(Optimizer):
         self.model, param_groups = self.init_model_aux(
                                         model, module_names,config
                                         )
-        self.model.to(device)
         defaults = dict(lr=aux_lr, fish_lr=fish_lr)
         super(FishLeg, self).__init__(param_groups, defaults)
 
@@ -234,25 +232,19 @@ class FishLeg(Optimizer):
         """
         if any(['weight' in m for m in module_names]):
             raise TypeError(f'Parameters to be optimized in FishLeg are considered together in one module, and cannot be optimized individually')
+        
         # Add auxiliary parameters
-
-        if len(module_names) == 0:
-            fl_names = [name for name, _ in model.named_modules()]
+        if len(module_names) == 0 or module_names[0] == 're:*':
+            named_layers = [NamedLayer(name, layer) for name, layer in model.named_modules()]
+        
         else:
-            fl_names = []
-            for name, _ in model.named_modules():
-                if any([
-                    re.match(fish_name + '$', name)
-                    for fish_name in module_names
-                ]):
-                    fl_names.append(name)
-
-        for module_name in fl_names:
+            named_layers = get_named_layers_by_regex(model, module_names)
+        
+        
+        for named_layer in named_layers:
             try: 
-                module = recursive_getattr(model, module_name)
-                if any([~p.requires_grad for p in module.parameters()]):
-                    raise TypeError(f'There exists untrainable parameter in the module named {module_name}.')
-                
+                module = named_layer.layer
+                module_name = named_layer.layer_name
                 if isinstance(module, nn.Linear):
                     replace = FishLinear(
                                 module.in_features,
@@ -295,14 +287,16 @@ class FishLeg(Optimizer):
                 raise TypeError(f'The given model has no module named {module_name}.')
         
         # Define each modules
+        model.to(self.device)
         param_groups = []
-        for module_name in module_names:
-            module = recursive_getattr(model, module_name)
+        for named_layer in named_layers:
+            module = recursive_getattr(model, named_layer.layer_name)
             params = {
                     name: param
                     for name, param in module.named_parameters()
                     if "fishleg_aux" not in name
                 }
+            
             g = {
                     "params": [params[name] for name in module.order],
                     "gradbar": [
@@ -469,7 +463,7 @@ class FishLeg(Optimizer):
                         group["grad"][i].add_(grad, alpha=alpha)
                     else:
                         group["grad"][i].copy_(grad)
-
+    
     def _prepare_input(
         self, data: Union[torch.Tensor, Any]
     ) -> Union[torch.Tensor, Any]:
@@ -524,7 +518,7 @@ class FishLeg(Optimizer):
             qg = group["Qv"]() if self.batch_speedup else group["Qv"](group["grad"])
 
             for p, g, d_p in zip(
-                group["params"], group["grad"], qg, group["order"]
+                group["params"], group["grad"], qg
             ):
                 grad = p.grad.data
                 quad_term = quad_term + torch.sum(grad * d_p)
@@ -590,16 +584,21 @@ class FishLeg(Optimizer):
                         else [p.grad.data for p in group["params"]]
                     )
                 )
+                if self.fine_tune:
 
-                for p, d_p, gbar, p0 in zip(
-                    group["params"], nat_grad, group["gradbar"], group["theta0"]
-                ):
-                    gbar.copy_(self.beta * gbar + (1.0 - self.beta) * d_p)
-                    if self.fine_tune:
+                    for p, d_p, gbar, p0 in zip(
+                        group["params"], nat_grad, group["gradbar"], group["theta0"]
+                    ):
+                        gbar.copy_(self.beta * gbar + (1.0 - self.beta) * d_p)
                         delta = gbar.add(p - p0, alpha=self.weight_decay)
-                    else:
+                        p.add_(delta, alpha=-self.fish_lr)
+                else:
+                    for p, d_p, gbar in zip(
+                        group["params"], nat_grad, group["gradbar"]
+                    ):
+                        gbar.copy_(self.beta * gbar + (1.0 - self.beta) * d_p)
                         delta = gbar.add(p, alpha=self.weight_decay / self.fish_lr)
-                    p.add_(delta, alpha=-self.fish_lr)
+                        p.add_(delta, alpha=-self.fish_lr)
 
     @torch.no_grad()
     def _save_input(

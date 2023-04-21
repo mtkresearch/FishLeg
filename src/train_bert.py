@@ -196,7 +196,7 @@ if __name__ == "__main__":
     )
  
     # Tell pytorch to run this model on the GPU.
-    model.cuda()
+    # model.cuda()
 
     # Get all of the model's parameters as a list of tuples.
     params = list(model.named_parameters())
@@ -252,7 +252,7 @@ if __name__ == "__main__":
 
  
     optimizer = FishLeg(
-        model.to(device),
+        model,
         draw,
         nll,
         aux_dataloader,
@@ -266,9 +266,9 @@ if __name__ == "__main__":
         aux_betas=(0.9, 0.999),
         aux_eps=1e-8,
         module_names=[
-            "bert.encoder.layer.[^.]*.attention",
-            "bert.encoder.layer.[^.]*.intermediate.dense",
-            "bert.encoder.layer.[^.]*.output.dense"
+            "re:bert.encoder.layer.*.attention",
+            "re:bert.encoder.layer.*.intermediate.dense",
+            "re:bert.encoder.layer.*.output.dense"
         ],
         config=model.config,
         device=device,
