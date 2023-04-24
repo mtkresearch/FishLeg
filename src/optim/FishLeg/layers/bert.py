@@ -1,4 +1,4 @@
-from typing import List
+from typing import Tuple
 import torch
 from torch.nn import ParameterDict, Parameter
 
@@ -54,7 +54,7 @@ class FishBertAttention(BertAttention, FishModule):
         self.device = device
 
     
-    def Qv(self, v: List, full=False) -> List:
+    def Qv(self, v: Tuple, full=False) -> Tuple:
         Uk = torch.transpose(
                 torch.cat([v[0], v[1][:, None]], dim=-1),
                 -1,-2
@@ -122,12 +122,12 @@ class FishBertAttention(BertAttention, FishModule):
                 self.fishleg_aux["V"].T
         ))
 
-        return [
+        return (
             Vk[:, :-1], Vk[:, -1],\
             Vq[:, :-1], Vq[:, -1],\
             Vv[:, :-1], Vv[:, -1],
             Vo[:, :-1], Vo[:, -1]
-        ]
+        )
 
     def diagQ(self) -> List:
         L = self.fishleg_aux["L"]
@@ -150,10 +150,10 @@ class FishBertAttention(BertAttention, FishModule):
         V = diagv.reshape(self.hidden_size + 1, self.all_head_size).T
         O = diago.reshape(self.all_head_size + 1, self.hidden_size).T
 
-        return [
+        return (
             K[:, :-1], K[:, -1],\
             Q[:, :-1], Q[:, -1],\
             V[:, :-1], V[:, -1],\
             O[:, :-1], O[:, -1]
-        ]
+        )
 

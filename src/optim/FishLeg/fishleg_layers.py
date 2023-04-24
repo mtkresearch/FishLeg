@@ -10,7 +10,9 @@ from typing import Any, List, Dict, Tuple, Callable, Optional
 
 __all__ = [
     "FishLinear",
-    "FishConv2d"
+    "FishConv2d",
+    "FishBatchNorm2d",
+    "FishLayerNorm"
 ]
 
 
@@ -212,7 +214,7 @@ class FishLinear(nn.Linear, FishModule):
         g = g.view(-1, g.size(-1))
         self._g = g.T
 
-    def diagQ(self) -> Tensor:
+    def diagQ(self) -> Tuple:
         """The Q matrix defines the inverse fisher approximation as below:
 
         .. math::
@@ -234,11 +236,14 @@ class FishLinear(nn.Linear, FishModule):
         """
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
-        diag = torch.kron(torch.sum(L * L, dim=0), torch.sum(R * R, dim=0))
+        diag = torch.kron(torch.sum(L * L, dim=0), torch.sum(R * R, dim=1))
+        diag = diag * \
+                torch.square(self.fishleg_aux["D"].T).reshape(-1) * \
+                torch.square(self.fishleg_aux["A"].T).reshape(-1)
+
+        diag = diag.reshape(L.shape[0], R.shape[0]).T
         return (
-            diag
-            * torch.square(self.fishleg_aux["D"].T).reshape(-1)
-            * torch.square(self.fishleg_aux["A"].T).reshape(-1)
+            diag[:, :-1], diag[:, -1]
         )
 
 
@@ -332,3 +337,76 @@ class FishConv2d(nn.Conv2d, FishModule):
             return (qvW, qvB)
         else:
             return (qvW,)
+
+
+
+class FishBatchNorm2d(nn.BatchNorm2d, FishModule):
+
+    def __init__(self, num_features: int, 
+                       eps: float = 0.00001, 
+                       momentum: float = 0.1, 
+                       affine: bool = True, 
+                       track_running_stats: bool = True, 
+                       init_scale = 1.0,
+                       device=None, 
+                       dtype=None) -> None:
+
+        super().__init__(num_features, eps, momentum, affine, track_running_stats, device, dtype)()
+        self._layer_name = "BatchNorm2d"
+        if affine:
+            self.fishleg_aux = ParameterDict(
+                {
+                "L_w": Parameter(torch.ones((num_features,), device=device) * np.sqrt(init_scale)),
+                "L_b": Parameter(torch.ones((num_features,), device=device) * np.sqrt(init_scale)),
+                }
+            )
+
+        self.order = ["weight", "bias"]
+
+    def Qv(self, v: Tuple, full=False):
+
+        return (
+            torch.square(self.fishleg_aux['L_w']) * v[0],
+            torch.square(self.fishleg_aux['L_b']) * v[1]
+        )
+
+    def diagQ(self):
+        return (
+            torch.square(self.fishleg_aux['L_w']),
+            torch.square(self.fishleg_aux['L_b'])
+        )
+
+class FishLayerNorm(nn.LayerNorm, FishModule):
+
+    def __init__(self, normalized_shape, 
+                       eps: float = 0.00001, 
+                       elementwise_affine: bool = True, 
+                       init_scale = 1.0,
+                       device=None, 
+                       dtype=None) -> None:
+        super().__init__(normalized_shape, eps, elementwise_affine, device, dtype)
+
+        self._layer_name = "LayerNorm"
+
+        if elementwise_affine:
+            self.fishleg_aux = ParameterDict(
+                {
+                "L_w": Parameter(torch.ones(normalized_shape, device=device) * np.sqrt(init_scale)),
+                "L_b": Parameter(torch.ones(normalized_shape, device=device) * np.sqrt(init_scale)),
+                }
+            )
+
+        self.order = ["weight", "bias"]
+
+    def Qv(self, v: Tuple, full=False):
+
+        return (
+            torch.square(self.fishleg_aux['L_w']) * v[0],
+            torch.square(self.fishleg_aux['L_b']) * v[1]
+        )
+
+    def diagQ(self):
+        return (
+            torch.square(self.fishleg_aux['L_w']),
+            torch.square(self.fishleg_aux['L_b'])
+        )
