@@ -21,6 +21,8 @@
 </p>
 
 ## Overview
+This Library contain the oficial PyTorch implementation of the  “Fisher-Legendre” (FishLeg) optimizer as introduced in - [Fisher-Legendre (FishLeg) optimization of deep neural networks ] (https://openreview.net/pdf?id=c9lAOPvQHS)
+FishLeg is a learnt second other optimization method and thanks to its generality, we expect FishLeg to facilitate the handling of a variety neural network architectures. The main goal of the library is to provide researchers and developers with an easy-to-use implementation of the FishLeg optimizer and curvature estimator.
 
 ## Installation
 
