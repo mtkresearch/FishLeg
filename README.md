@@ -28,5 +28,13 @@ FishLeg is a learnt second-order optimization method that uses natural gradients
 ## Usage
 
 ## Citation
+```
+@article{garcia2022yolov7,
+  title={Fisher-Legendre (FishLeg) optimization of deep neural networks},
+  author={Garcia, Jezabel R and Freddi, Federica and Fotiadis, Stathi1 and Li, Maolin and Vakili, Sattar, and Bernacchia, Alberto and Hennequin,Guillaume },
+  journal={},
+  year={2023}
+}
+```
 
 ## Contributing
