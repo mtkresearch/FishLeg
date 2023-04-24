@@ -15,6 +15,9 @@
     <a href="https://github.com/mtkresearch/FishLeg/blob/main/LICENSE">
         <img alt="GitHub" src="https://img.shields.io/badge/License-apache--2.0-red?style=for-the-badge" height=25>
     </a>
+ <!--    [![arxiv.org](http://img.shields.io/badge/cs.CV-arXivnumber.svg)](https://openreview.net/pdf?id=c9lAOPvQHS)
+    <a> -->
+    </a>
 </p>
 
 ## Overview
