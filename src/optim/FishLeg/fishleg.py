@@ -13,7 +13,7 @@ from .utils import recursive_setattr, recursive_getattr, update_dict, get_named_
 from transformers import get_scheduler
 
 from .layers import *
-from .fishleg_layers import FishLinear, FishConv2d
+from .fishleg_layers import *
 from .fishleg_likelihood import FishLikelihood
 
 __all__ = [
@@ -260,7 +260,6 @@ class FishLeg(Optimizer):
                     elif self.initialization == "zero": # fill with zeros for adapters
                         module.weight.data.zero_()
                         module.bias.data.zero_()
-                    recursive_setattr(model, module_name, replace)
                 elif isinstance(module, nn.Conv2d):
                     replace = FishConv2d(
                             in_channels=module.in_channels,
@@ -276,13 +275,32 @@ class FishLeg(Optimizer):
                             # TODO: deal with dtype and device?
                         )
                     replace = update_dict(replace, module)
-                    recursive_setattr(model, module_name, replace)
                 elif isinstance(module, BertAttention):
                     replace = FishBertAttention(config, device=self.device)
                     replace = update_dict(replace, module)
-                    recursive_setattr(model, module_name, replace)
+                elif isinstance(module, nn.BatchNorm2d):
+                    replace = FishBatchNorm2d(
+                            num_features=module.num_features,
+                            eps=module.eps,
+                            momentum=module.momentum,
+                            affine=module.affine,
+                            track_running_stats=module.track_running_stats,
+                            init_scale=self.scale,
+                            device=self.device
+                    )
+                    replace = update_dict(replace, module)
+                elif isinstance(module, nn.LayerNorm):
+                    replace = FishLayerNorm(
+                        normalized_shape=module.normalized_shape,
+                        eps=module.eps,
+                        elementwise_affine=module.elementwise_affine,
+                        init_scale=self.scale,
+                        device=self.device
+                    )
+                    replace = update_dict(replace, module)
                 else:
                     raise Warning(f'The FishLayer for module named {module_name} has not been implemented and hence skipped.')
+                recursive_setattr(model, module_name, replace)
             except:
                 raise TypeError(f'The given model has no module named {module_name}.')
         
