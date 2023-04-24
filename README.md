@@ -1,6 +1,6 @@
 <h1>FishLeg</h1>
 
-<h3>Repository containing a PyTorch implementation of the Fisher-Legendre Second Order Optimization method. </h3>
+<h3>Repository containing the official PyTorch implementation of the Fisher-Legendre Second Order Optimization method. </h3>
 
 <p>
     <a href="https://mtkresearch.github.io/FishLeg/">
