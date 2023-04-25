@@ -177,8 +177,9 @@ class FishLeg(Optimizer):
         aux_param = [
             param for name, param in model.named_parameters() if "fishleg_aux" in name
         ]
-        if len(self.likelihood.get_parameters()) > 0:
-            aux_param.extend(self.likelihood.get_aux_parameters())
+        if self.likelihood is not None:
+            if len(self.likelihood.get_parameters()) > 0:
+                aux_param.extend(self.likelihood.get_aux_parameters())
         self.aux_opt = Adam(
             aux_param,
             lr=aux_lr,
@@ -334,20 +335,20 @@ class FishLeg(Optimizer):
                 else:
                     raise NotImplementedError(f'Batch Speedup has not been implemented for module {module_name}')
             
-
-        likelihood_params = self.likelihood.get_parameters()
-        if len(likelihood_params) > 0:
-            self.likelihood.init_aux(init_scale=self.scale)
-            g = {
-                "params": likelihood_params,
-                "gradbar": [torch.zeros_like(p) for p in likelihood_params],
-                "theta0": [p.clone() for p in likelihood_params],
-                "grad": [torch.zeros_like(p) for p in likelihood_params],
-                "Qv": self.likelihood.Qv,
-                "order": self.likelihood.order,
-                "name": "likelihood",
-            }
-            param_groups.append(g)
+        if self.likelihood is not None:
+            likelihood_params = self.likelihood.get_parameters()
+            if len(likelihood_params) > 0:
+                self.likelihood.init_aux(init_scale=self.scale)
+                g = {
+                    "params": likelihood_params,
+                    "gradbar": [torch.zeros_like(p) for p in likelihood_params],
+                    "theta0": [p.clone() for p in likelihood_params],
+                    "grad": [torch.zeros_like(p) for p in likelihood_params],
+                    "Qv": self.likelihood.Qv,
+                    "order": self.likelihood.order,
+                    "name": "likelihood",
+                }
+                param_groups.append(g)
 
         # TODO: The above may not be a very "correct" way to do this, so please feel free to change, for example, we may want to check the name is in the fish_layer keys before attempting what is in the try statement.
         # TODO: Error checking to check that model includes some auxiliary arguments.
