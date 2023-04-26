@@ -259,7 +259,7 @@ class FishLeg(Optimizer):
                                 for param_name in layer.layer.order
                             ):
                             skip = True
-                if skip: continue
+                if skip or 'embedding' in module_name: continue
                 if isinstance(module, nn.Linear):
                     replace = FishLinear(
                                 module.in_features,
@@ -459,6 +459,7 @@ class FishLeg(Optimizer):
                 checks += check
                 if pre % batch_size == 0:
                     info = [e.detach().cpu().numpy() for e in info]
+                    if pre > 0: checks = checks / batch_size
                     if testloader is not None:
                         test_checks = 0
                         for _ in range(100):
@@ -477,12 +478,18 @@ class FishLeg(Optimizer):
 
                             test_info = self.update_aux(fisher=fisher,train=False)
                             test_checks += test_info[1].detach().cpu().numpy()
-                            
-                        print("iter:{:d}, \t train:{:.2f} \t test:{:.2f} \t auxloss:{:.2f} check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                pre, checks / batch_size, test_checks / 100, *info))
+
+                        print(
+                            "iter:{:d}, \t train:{:.2f} \t test:{:.2f} \t auxloss:{:.2f} check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                                pre, checks, test_checks / 100, *info
+                            )
+                        )
                     else:
-                        print("iter:{:d}, \t train:{:.2f} \t auxloss:{:.2f} \check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                pre, checks / batch_size, *info))
+                        print(
+                            "iter:{:d}, \t train:{:.2f} \t auxloss:{:.2f} \check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                                pre, checks, *info
+                            )
+                        )
                     aux = 0
                     checks = 0
 
