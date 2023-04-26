@@ -253,7 +253,7 @@ class FishLeg(Optimizer):
                                 for param_name in layer.layer.order
                             ):
                             skip = True
-                if skip: continue
+                if skip or 'embedding' in module_name: continue
                 if isinstance(module, nn.Linear):
                     replace = FishLinear(
                                 module.in_features,
@@ -421,9 +421,6 @@ class FishLeg(Optimizer):
         fisher: bool = True,
     ) -> List:
         aux_losses = []
-        linear_losses = []
-        quad_losses = []
-        reg_losses = []
         aux, checks = 0, 0
         for pre in range(iterations):
             self.zero_grad()
@@ -441,9 +438,6 @@ class FishLeg(Optimizer):
 
             info = self.update_aux(fisher=fisher)
             aux_loss = info[0].detach().cpu().numpy()
-            linear_losses.append(info[1].detach().cpu().numpy())
-            quad_losses.append(info[2].detach().cpu().numpy())
-            reg_losses.append(info[3].detach().cpu().numpy())
             check = info[1].detach().cpu().numpy()
             linear_term = info[2].detach().cpu().numpy()
             aux_losses.append(aux_loss + 0.5 * linear_term)
@@ -453,6 +447,7 @@ class FishLeg(Optimizer):
                 checks += check
                 if pre % batch_size == 0:
                     info = [e.detach().cpu().numpy() for e in info]
+                    if pre > 0: checks = checks / batch_size
                     if testloader is not None:
                         test_checks = 0
                         for _ in range(100):
@@ -474,17 +469,16 @@ class FishLeg(Optimizer):
 
                         print(
                             "iter:{:d}, \t train:{:.2f} \t test:{:.2f} \t auxloss:{:.2f} check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                pre, checks / batch_size, test_checks / 100, *info
+                                pre, checks, test_checks / 100, *info
                             )
                         )
                     else:
                         print(
                             "iter:{:d}, \t train:{:.2f} \t auxloss:{:.2f} \check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                pre, checks / batch_size, *info
+                                pre, checks, *info
                             )
                         )
                     aux = 0
-                    print(0.5 * info[0])
                     checks = 0
 
         return aux_losses
