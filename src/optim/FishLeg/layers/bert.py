@@ -142,15 +142,15 @@ class FishBertAttention(BertAttention, FishModule):
         U = self.fishleg_aux["U"]
         R = L@self.fishleg_aux["R"]
 
-        diagk = torch.kron(torch.sum(self.fishleg_aux["Q"]@L, dim=0), 
-                        torch.sum(self.fishleg_aux["A"]@R, dim=0))
-        diagq = torch.kron(torch.sum(self.fishleg_aux["B"].T@L, dim=0), 
-                        torch.sum(self.fishleg_aux["K"].T@R, dim=0))
+        diagk = torch.kron(torch.sum(self.fishleg_aux["Q"]@L, dim=-1), 
+                        torch.sum(self.fishleg_aux["A"]@R, dim=-1))
+        diagq = torch.kron(torch.sum(self.fishleg_aux["B"].T@L, dim=-1), 
+                        torch.sum(self.fishleg_aux["K"].T@R, dim=-1))
 
-        diagv = torch.kron(torch.sum(self.fishleg_aux["C"].T@L, dim=0), 
-                        torch.sum(self.fishleg_aux["O"].T@U, dim=0))
-        diago = torch.kron(torch.sum(self.fishleg_aux["V"]@L, dim=0), 
-                        torch.sum(self.fishleg_aux["D"]@U, dim=0))
+        diagv = torch.kron(torch.sum(self.fishleg_aux["C"].T@L, dim=-1), 
+                        torch.sum(self.fishleg_aux["O"].T@U, dim=-1))
+        diago = torch.kron(torch.sum(self.fishleg_aux["V"]@L, dim=-1), 
+                        torch.sum(self.fishleg_aux["D"]@U, dim=-1))
         
 
         K = diagk.reshape(self.all_head_size, self.hidden_size + 1)
