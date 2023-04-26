@@ -293,7 +293,11 @@ class FishLeg(Optimizer):
                 elif isinstance(module, BertAttention):
                     if config is None:
                         config = model.config
-                    replace = FishBertAttention(config, device=self.device)
+                    replace = FishBertAttention(
+                            config, 
+                            init_scale=self.scale,        
+                            device=self.device
+                    )
                     replace = update_dict(replace, module)
                 elif isinstance(module, nn.BatchNorm2d):
                     replace = FishBatchNorm2d(
@@ -486,7 +490,7 @@ class FishLeg(Optimizer):
                         )
                     else:
                         print(
-                            "iter:{:d}, \t train:{:.2f} \t auxloss:{:.2f} \check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                            "iter:{:d}, \t train:{:.2f} \t auxloss:{:.2f} \tcheck:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
                                 pre, checks, *info
                             )
                         )

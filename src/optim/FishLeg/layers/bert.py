@@ -10,6 +10,7 @@ class FishBertAttention(BertAttention, FishModule):
         self,
         config,
         position_embedding_type=None, ##?
+        init_scale = 1.0,
         device = None,
         dtype = None,
     ) -> None:
@@ -20,27 +21,34 @@ class FishBertAttention(BertAttention, FishModule):
         self._layer_name = "BertSelfAttention"
         self.all_head_size, self.hidden_size = self.self.key.weight.shape
 
+        eff_scale = init_scale ** (1.0 / 8)
         self.fishleg_aux = ParameterDict(
             {
-                "L": Parameter(torch.eye(self.hidden_size + 1)),
-                "R": Parameter(torch.eye(self.hidden_size + 1)),
-                "U": Parameter(torch.eye(self.hidden_size)),
-                "A": Parameter(torch.eye(self.hidden_size + 1)),
-                "B": Parameter(torch.eye(self.hidden_size + 1)),
-                "C": Parameter(torch.eye(self.hidden_size + 1)),
-                "D": Parameter(torch.eye(self.hidden_size)),
+                "L": Parameter(torch.eye(self.hidden_size + 1) * eff_scale),
+                "R": Parameter(torch.eye(self.hidden_size + 1) * eff_scale),
+                "U": Parameter(torch.eye(self.hidden_size) * eff_scale),
+                "A": Parameter(torch.eye(self.hidden_size + 1) * eff_scale),
+                "B": Parameter(torch.eye(self.hidden_size + 1) * eff_scale),
+                "C": Parameter(torch.eye(self.hidden_size + 1) * eff_scale),
+                "D": Parameter(torch.eye(self.hidden_size) * eff_scale),
 
                 "K": Parameter(
-                        torch.ones(self.hidden_size + 1, self.all_head_size),
+                        torch.cat([
+                            torch.eye(self.hidden_size) * eff_scale,
+                            torch.zeros(1, self.hidden_size)
+                        ], dim=0)
                     ),
                 "Q": Parameter(
-                        torch.ones(self.all_head_size, self.hidden_size + 1),
+                        torch.cat([
+                            torch.eye(self.hidden_size) * eff_scale,
+                            torch.zeros(self.hidden_size, 1)
+                        ], dim=-1)
                     ),
                 "V": Parameter(
-                        torch.ones(self.all_head_size + 1, self.hidden_size + 1),
+                        torch.eye(self.hidden_size + 1) * eff_scale,
                     ),
                 "O": Parameter(
-                        torch.ones(self.hidden_size, self.all_head_size),
+                        torch.eye(self.hidden_size) * eff_scale,
                     )
             }
         )
