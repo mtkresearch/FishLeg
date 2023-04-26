@@ -6,6 +6,7 @@ import numpy as np
 from torch.nn import init
 from torch.optim import Optimizer, Adam
 import sys
+import regex as re
 from functools import partial
 from transformers.models.bert.modeling_bert import BertAttention
 
@@ -128,7 +129,7 @@ class FishLeg(Optimizer):
                 Tuple[torch.Tensor, torch.Tensor]
                 ], torch.Tensor],
         aux_dataloader: torch.utils.data.DataLoader,
-        likelihood: FishLikelihood,
+        likelihood: FishLikelihood = None,
         fish_lr: float = 5e-2,
         damping: float = 5e-1,
         weight_decay: float = 1e-5,
@@ -149,7 +150,8 @@ class FishLeg(Optimizer):
         warmup_data: torch.utils.data.DataLoader = None,
         warmup_loss: Callable = None
         device: str = "cpu",
-        config = None
+        config = None,
+        verbose = False
     ) -> None:
 
         self.model = model
@@ -165,6 +167,7 @@ class FishLeg(Optimizer):
         self.scale = scale
         self.aux_lr = aux_lr
         self.damping = damping
+        self.verbose = verbose
 
         self.draw = draw
         self.nll = nll
@@ -241,11 +244,22 @@ class FishLeg(Optimizer):
         else:
             named_layers = get_named_layers_by_regex(model, module_names)
         
-        
+        replaced_layers = [] 
         for named_layer in named_layers:
-            try: 
+            if True: 
                 module = named_layer.layer
                 module_name = named_layer.layer_name
+                
+                skip = False
+                for layer in replaced_layers:
+                    if re.match(layer.layer_name, module_name):
+                        inner_name = module_name[len(layer.layer_name)+1:]
+                        if any(
+                                re.match(inner_name, param_name)
+                                for param_name in layer.layer.order
+                            ):
+                            skip = True
+                if skip: continue
                 if isinstance(module, nn.Linear):
                     replace = FishLinear(
                                 module.in_features,
@@ -277,6 +291,8 @@ class FishLeg(Optimizer):
                         )
                     replace = update_dict(replace, module)
                 elif isinstance(module, BertAttention):
+                    if config is None:
+                        config = model.config
                     replace = FishBertAttention(config, device=self.device)
                     replace = update_dict(replace, module)
                 elif isinstance(module, nn.BatchNorm2d):
@@ -300,16 +316,20 @@ class FishLeg(Optimizer):
                     )
                     replace = update_dict(replace, module)
                 else:
-                    raise Warning(f'The FishLayer for module named {module_name} has not been implemented and hence skipped.')
+                    continue
+                    #raise Warning(f'The FishLayer for module named {module_name} has not been implemented and hence skipped.')
                 recursive_setattr(model, module_name, replace)
-            except:
-                raise TypeError(f'The given model has no module named {module_name}.')
+                replaced_layers.append(NamedLayer(module_name, replace))
+                if self.verbose:
+                    print("Replaced with FishLeg Layer: \t ", module_name)
+            #except:
+            #    raise TypeError(f'The given model has no module named {module_name}.')
         
         # Define each modules
         model.to(self.device)
         param_groups = []
-        for named_layer in named_layers:
-            module = recursive_getattr(model, named_layer.layer_name)
+        for named_layer in replaced_layers:
+            module = named_layer.layer
             params = {
                     name: param
                     for name, param in module.named_parameters()

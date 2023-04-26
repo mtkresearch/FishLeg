@@ -129,7 +129,7 @@ class FishBertAttention(BertAttention, FishModule):
             Vo[:, :-1], Vo[:, -1]
         )
 
-    def diagQ(self) -> List:
+    def diagQ(self) -> Tuple:
         L = self.fishleg_aux["L"]
         U = self.fishleg_aux["U"]
         R = L@self.fishleg_aux["R"]
