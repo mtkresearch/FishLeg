@@ -93,7 +93,7 @@ class FishBertAttention(BertAttention, FishModule):
    
         L = self.fishleg_aux["L"]
         U = self.fishleg_aux["U"]
-        R = L@self.fishleg_aux["R"]
+        R = self.fishleg_aux["R"]
 
         zkq = torch.linalg.multi_dot((
                 R,R.T,zkq,L,L.T
@@ -133,14 +133,14 @@ class FishBertAttention(BertAttention, FishModule):
         return (
             Vk[:, :-1], Vk[:, -1],\
             Vq[:, :-1], Vq[:, -1],\
-            Vv[:, :-1], Vv[:, -1],
+            Vv[:, :-1], Vv[:, -1],\
             Vo[:, :-1], Vo[:, -1]
         )
 
     def diagQ(self) -> Tuple:
         L = self.fishleg_aux["L"]
         U = self.fishleg_aux["U"]
-        R = L@self.fishleg_aux["R"]
+        R = self.fishleg_aux["R"]
 
         diagk = torch.kron(torch.sum(self.fishleg_aux["Q"]@L, dim=-1), 
                         torch.sum(self.fishleg_aux["A"]@R, dim=-1))

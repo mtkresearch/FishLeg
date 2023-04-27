@@ -254,7 +254,6 @@ class FishConv2d(nn.Conv2d, FishModule):
         groups: int = 1,
         bias: bool = True,
         padding_mode: str = "zeros",
-        init_scale: float = 1.0,
         device=None,
     ) -> None:
         super(FishConv2d, self).__init__(
@@ -267,72 +266,94 @@ class FishConv2d(nn.Conv2d, FishModule):
             groups=groups,
             bias=bias,
             padding_mode=padding_mode,
+            device=device,
         )
         self._layer_name = "Conv2d"
-
+        self.in_channels_eff = self.in_channels / self.groups
         self.k_size = self.kernel_size[0] * self.kernel_size[1]
-        eff_scale = init_scale ** (1.0 / 3)
         self.fishleg_aux = ParameterDict(
-            {
-                "L_o": Parameter(torch.eye(out_channels, device=device) * eff_scale),
-                "L_i": Parameter(torch.eye(in_channels, device=device) * eff_scale),
-                "L_k": Parameter(torch.eye(self.k_size, device=device) * eff_scale),
-                "L_b": Parameter(torch.eye(out_channels, device=device) * eff_scale),
-            }
-        )
-
+                {
+                    "L": Parameter(torch.eye((1 if bias else 0) + in_channels_eff * self.k_size, device=device)),
+                    "R": Parameter(torch.eye(out_channels, device=device)),
+                    "A": Parameter(torch.ones(out_channels, (1 if bias else 0) + in_channels_eff * self.k_size, device=device)),
+                }
+            )
         self.order = ["weight", "bias"] if bias else ["weight"]
 
-    def Qv(self, v: Tuple[Tensor, Optional[Tensor]]) -> Tuple[Tensor, Optional[Tensor]]:
-        """For fully-connected layers, the default structure of :math:`Q` as a
-        block-diaglonal matrix is,
-        .. math::
-                    Q_l = (R_lR_l^T \otimes L_lL_l^T)
-        where :math:`l` denotes the l-th layer. The matrix :math:`R_l` has size
-        :math:`(N_{l-1} + 1) \\times (N_{l-1} + 1)` while the matrix :math:`L_l` has
-        size :math:`N_l \\times N_l`. The auxiliarary parameters :math:`\lambda`
-        are represented by the matrices :math:`L_l, R_l`.
+    def warmup(
+        self,
+        v: Tuple[Tensor, Tensor] = None,
+        init_scale: float = 1.0,
+    ) -> None:
+        if v is None:
+            self.fishleg_aux["A"].data.mul_(np.sqrt(init_scale))
+        else:
+            if bias:
+                w, b = v
+                w = torch.reshape(w, (out_channels, -1))
+                b = torch.reshape(b, (out_channels, 1))
+                A = torch.cat([w, b], dim=-1)
+            else:
+                w, = v
+                A = torch.reshape(w, (out_channels, -1))
+ 
+            self.fishleg_aux["A"].data.copy_(A)
+
+
+    def Qv(
+        self, v: Tuple[Tensor, Optional[Tensor]], full: bool = False
+    ) -> Tuple[Tensor, Optional[Tensor]]:
+        """Inspired by KFAC's conv2D layer by Grosse and Martens: Kronecker product of sizes (out_channels ⊗  (in_channels_eff * k_size))
         """
 
-        # Qv product for the weights
-        W = v[0]
-        L_o = self.fishleg_aux["L_o"]
-        L_i = self.fishleg_aux["L_i"]
-        L_k = self.fishleg_aux["L_k"]
-        L_b = self.fishleg_aux["L_b"]
+        L = self.fishleg_aux["L"]
+        R = self.fishleg_aux["R"]
+        A = self.fishleg_aux["A"]
 
-        tmp = torch.reshape(W, (-1, self.k_size))
-        tmp = torch.matmul(torch.matmul(tmp, L_k), L_k.T)
-        tmp = torch.reshape(tmp, (self.out_channels, self.in_channels, self.k_size))
-        tmp = torch.transpose(tmp, 1, 2)
-        tmp = torch.reshape(tmp, (-1, self.in_channels))
-        tmp = torch.matmul(torch.matmul(tmp, L_i), L_i.T)
-        tmp = torch.reshape(tmp, (self.out_channels, self.k_size, self.in_channels))
-        tmp = torch.transpose(tmp, 0, 2)
-        tmp = torch.reshape(tmp, (-1, self.out_channels))
-        tmp = torch.matmul(torch.matmul(tmp, L_o), L_o.T)
-        tmp = torch.reshape(tmp, (self.in_channels, self.k_size, self.out_channels))
-        tmp = tmp.permute((2, 0, 1))
-        qvW = torch.reshape(
-            tmp,
-            (
-                self.out_channels,
-                self.in_channels,
-                self.kernel_size[0],
-                self.kernel_size[1],
-            ),
-        )
-
-        if self.bias:
-            b = v[1]
-            bs = tuple(torch.size(bs))
-            b = torch.reshape(b, (-1, 1))
-            qvB = torch.matmul(L_b, torch.matmul(L_b.T, b))
-            qvB = torch.reshape(qvB, bs)
-            return (qvW, qvB)
+        if bias:
+            w, b = v
+            sw = w.shape
+            sb = b.shape
+            w = torch.reshape(w, (out_channels, -1))
+            b = torch.reshape(b, (out_channels, 1))
+            u = torch.cat([w, b], dim=-1)
         else:
-            return (qvW,)
+            w, = v
+            sw = w.shape
+            u = torch.reshape(w, (out_channels, -1))
 
+        # at this stage, u is out_channels * (in_channels_eff * k_size (perhaps +1))
+
+        u = torch.linalg.multi_dot((R, (A * u), L.T))
+        u = A * torch.linalg.multi_dot((R.T, u, L))
+
+        if bias:
+            return (torch.reshape(u[:, :-1], sw), torch.reshape(u[:, -1], sb))
+        else:
+            return (torch.reshape(u, sw), )
+
+
+    def diagQ(self) -> Tensor:
+        """Similar maths as the Linear layer"""
+
+        L = self.fishleg_aux["L"]
+        R = self.fishleg_aux["R"]
+        A = self.fishleg_aux["A"]
+
+        diagA = torch.reshape(A.T, (-1))
+        diag = diagA * torch.kron(torch.sum(torch.square(L), dim=0), torch.sum(torch.square(R), dim=0))
+
+        if bias:
+            w = diag[: -self.out_channels]
+            b = diag[-self.out_channels :]
+            w = torch.reshape(w, (self.in_channels_eff * self.k_size, self.out_channels))
+            w = torch.reshape(w.T, (self.out_channels, self.in_channels_eff, self.kernel_size[0], self.kernel_size[1]))
+            b = torch.reshape(b, (self.out_channels)))
+            return (w, b)
+        else:
+            w = torch.reshape(w, (self.in_channels_eff * self.k_size, self.out_channels))
+            w = torch.reshape(w.T, (self.out_channels, self.in_channels_eff, self.kernel_size[0], self.kernel_size[1]))
+            return (w, )
 
 
 class FishBatchNorm2d(nn.BatchNorm2d, FishModule):
