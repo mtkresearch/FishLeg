@@ -111,7 +111,6 @@ class FishLinear(nn.Linear, FishModule):
                 "L": Parameter(torch.eye(in_features + 1)),
                 "R": Parameter(torch.eye(out_features)),
                 "A": Parameter(torch.ones(out_features, in_features + 1)),
-                "D": Parameter(torch.ones(out_features, in_features + 1)),
             }
         )
         mask_L = torch.tril(torch.ones_like(self.fishleg_aux["L"])).to(device)
@@ -135,9 +134,9 @@ class FishLinear(nn.Linear, FishModule):
                 self.fishleg_aux["R"].data.mul_(np.sqrt(init_scale))
                 self.fishleg_aux["L"].data.mul_(np.sqrt(init_scale))
             else:
-                self.fishleg_aux["D"].data.mul_(np.sqrt(init_scale))
+                self.fishleg_aux["A"].data.mul_(np.sqrt(init_scale))
         else:
-            D = torch.cat([v[0], v[1][:, None]], dim=-1)
+            A = torch.cat([v[0], v[1][:, None]], dim=-1)
             if batch_speedup:
                 # nearest Kronecker product, using SVD
                 U, S, Vh = torch.linalg.svd(D, full_matrices=False)
@@ -148,7 +147,7 @@ class FishLinear(nn.Linear, FishModule):
                     torch.sqrt(torch.diag(torch.sqrt(S[0]) * Vh[0, :]))
                 )
             else:
-                self.fishleg_aux["D"].data.copy_(D)
+                self.fishleg_aux["A"].data.copy_(A)
 
     def Qv(self, v: Tuple[Tensor, Tensor], full: bool = False) -> Tuple[Tensor, Tensor]:
         """For fully-connected layers, the default structure of :math:`Q` as a
@@ -171,14 +170,11 @@ class FishLinear(nn.Linear, FishModule):
         R = self.fishleg_aux["R"]
         u = torch.cat([v[0], v[1][:, None]], dim=-1)
 
-        if not full:
-            u = torch.square(self.fishleg_aux["D"]) * u
-            u = torch.linalg.multi_dot((R.T, R, u, L, L.T))
-        else:
-            A = self.fishleg_aux["A"]
-            u = torch.linalg.multi_dot((R, (A * u), L))
-            u = torch.square(self.fishleg_aux["D"]) * u
-            u = A * torch.linalg.multi_dot((R.T, u, L.T))
+        
+        A = self.fishleg_aux["A"]
+        u = A * u
+        u = torch.linalg.multi_dot((R.T, R, u, L, L.T))
+        u = A * u
         return (u[:, :-1], u[:, -1])
 
     def Qg(self) -> Tuple[Tensor, Tensor]:
@@ -238,7 +234,6 @@ class FishLinear(nn.Linear, FishModule):
         R = self.fishleg_aux["R"]
         diag = torch.kron(torch.sum(L * L, dim=1), torch.sum(R * R, dim=0))
         diag = diag * \
-                torch.square(self.fishleg_aux["D"].T).reshape(-1) * \
                 torch.square(self.fishleg_aux["A"].T).reshape(-1)
 
         diag = diag.reshape(L.shape[0], R.shape[0]).T
