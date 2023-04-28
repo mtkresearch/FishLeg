@@ -138,7 +138,8 @@ class FishLinear(nn.Linear, FishModule):
             A = torch.cat([v[0], v[1][:, None]], dim=-1)
             if batch_speedup:
                 # nearest Kronecker product, using SVD
-                U, S, Vh = torch.linalg.svd(D, full_matrices=False)
+                # TODO: Check the below! This was D instead of A!
+                U, S, Vh = torch.linalg.svd(A, full_matrices=False)
                 self.fishleg_aux["R"].data.copy_(
                     torch.sqrt(torch.diag(torch.sqrt(S[0]) * U[:, 0]))
                 )
@@ -277,12 +278,13 @@ class FishLinear(nn.Linear, FishModule):
         self.k_size = self.kernel_size[0] * self.kernel_size[1]
         self.fishleg_aux = ParameterDict(
                 {
-                    "L": Parameter(torch.eye((1 if bias else 0) + in_channels_eff * self.k_size, device=device)),
+                    "L": Parameter(torch.eye(int(bias) + self.in_channels_eff * self.k_size, device=device)),
                     "R": Parameter(torch.eye(out_channels, device=device)),
-                    "A": Parameter(torch.ones(out_channels, (1 if bias else 0) + in_channels_eff * self.k_size, device=device)),
+                    "A": Parameter(torch.ones(out_channels, int(bias) + self.in_channels_eff * self.k_size, device=device)),
                 }
             )
         self.order = ["weight", "bias"] if bias else ["weight"]
+        self._bias = bias
 
     def warmup(
         self,
@@ -292,14 +294,14 @@ class FishLinear(nn.Linear, FishModule):
         if v is None:
             self.fishleg_aux["A"].data.mul_(np.sqrt(init_scale))
         else:
-            if bias:
+            if self._bias:
                 w, b = v
-                w = torch.reshape(w, (out_channels, -1))
-                b = torch.reshape(b, (out_channels, 1))
+                w = torch.reshape(w, (self.out_channels, -1))
+                b = torch.reshape(b, (self.out_channels, 1))
                 A = torch.cat([w, b], dim=-1)
             else:
                 w, = v
-                A = torch.reshape(w, (out_channels, -1))
+                A = torch.reshape(w, (self.out_channels, -1))
  
             self.fishleg_aux["A"].data.copy_(A)
 
@@ -314,24 +316,24 @@ class FishLinear(nn.Linear, FishModule):
         R = self.fishleg_aux["R"]
         A = self.fishleg_aux["A"]
 
-        if bias:
+        if self._bias:
             w, b = v
             sw = w.shape
             sb = b.shape
-            w = torch.reshape(w, (out_channels, -1))
-            b = torch.reshape(b, (out_channels, 1))
+            w = torch.reshape(w, (self.out_channels, -1))
+            b = torch.reshape(b, (self.out_channels, 1))
             u = torch.cat([w, b], dim=-1)
         else:
             w, = v
             sw = w.shape
-            u = torch.reshape(w, (out_channels, -1))
+            u = torch.reshape(w, (self.out_channels, -1))
 
         # at this stage, u is out_channels * (in_channels_eff * k_size (perhaps +1))
 
         u = torch.linalg.multi_dot((R, (A * u), L.T))
         u = A * torch.linalg.multi_dot((R.T, u, L))
 
-        if bias:
+        if self._bias:
             return (torch.reshape(u[:, :-1], sw), torch.reshape(u[:, -1], sb))
         else:
             return (torch.reshape(u, sw), )
@@ -347,12 +349,12 @@ class FishLinear(nn.Linear, FishModule):
         diagA = torch.reshape(A.T, (-1))
         diag = diagA * torch.kron(torch.sum(torch.square(L), dim=0), torch.sum(torch.square(R), dim=0))
 
-        if bias:
+        if self._bias:
             w = diag[: -self.out_channels]
             b = diag[-self.out_channels :]
             w = torch.reshape(w, (self.in_channels_eff * self.k_size, self.out_channels))
             w = torch.reshape(w.T, (self.out_channels, self.in_channels_eff, self.kernel_size[0], self.kernel_size[1]))
-            b = torch.reshape(b, (self.out_channels)))
+            b = torch.reshape(b, (self.out_channels))
             return (w, b)
         else:
             w = torch.reshape(w, (self.in_channels_eff * self.k_size, self.out_channels))
