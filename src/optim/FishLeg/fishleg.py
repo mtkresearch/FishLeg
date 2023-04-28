@@ -144,6 +144,7 @@ class FishLeg(Optimizer):
         normalization: bool = False,
         fine_tune: bool = False,
         module_names: List[str] = [],
+        skip_names: List[str] = [],
         initialization: str = "uniform",
         scale: float = 1.,
         warmup: int = 0,
@@ -174,8 +175,11 @@ class FishLeg(Optimizer):
         self.aux_dataloader = aux_dataloader
 
         self.model, param_groups = self.init_model_aux(
-                                        model, module_names,config
-                                        )
+                            model, 
+                            module_names=module_names,
+                            skip_names=skip_names,
+                            config=config
+                        )
         defaults = dict(lr=aux_lr, fish_lr=fish_lr)
         super(FishLeg, self).__init__(param_groups, defaults)
 
@@ -218,6 +222,7 @@ class FishLeg(Optimizer):
         self,
         model: nn.Module,
         module_names: List[str],
+        skip_names: List[str],
         config = None
     ) -> Union[nn.Module, List]:
         """Given a model to optimize, parameters can be devided to
@@ -259,7 +264,9 @@ class FishLeg(Optimizer):
                                 for param_name in layer.layer.order
                             ):
                             skip = True
-                if skip or 'embedding' in module_name: continue
+                if skip or any([
+                        name in module_name for name in skip_names
+                    ]): continue
                 if isinstance(module, nn.Linear):
                     replace = FishLinear(
                                 module.in_features,
@@ -606,7 +613,7 @@ class FishLeg(Optimizer):
         self.store_g = True
         return aux_loss, check, linear_term, quad_term, reg_term, g2
 
-    def step(self) -> None:
+    def step(self, closure=None) -> None:
         """Performes a single optimization step of FishLeg."""
         self.updated = False
         if self.update_aux_every > 0:
