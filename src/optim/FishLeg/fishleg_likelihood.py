@@ -102,7 +102,7 @@ class FixedGaussianLikelihood(FishLikelihood):
         logsigma2 = torch.log(torch.square(self.sigma))
         return (
             0.5
-            / preds.shape[0]
+            / np.prod(preds.shape[:-1])
             * torch.sum(logsigma2 + torch.square((observations - preds) / self.sigma))
         )
 
