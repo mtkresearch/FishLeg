@@ -31,16 +31,42 @@ The FishLeg library do not requires dedicated installation. <br />
 ## Usage
 FishLeg requires minimal code modifications to introduce it in existing training scripts. 
 ```Python
+from optim.FishLeg import FishLeg, FISH_LIKELIHOODS
+
+...
+likelihood = FISH_LIKELIHOODS["FixedGaussian".lower()](sigma=1.0, device=device)
+
+    def nll(model, data_x, data_y):
+        pred_y = model.forward(data_x)
+        return likelihood.nll(data_y, pred_y)
+
+    def draw(model, data_x):
+        pred_y = model.forward(data_x)
+        return likelihood.draw(pred_y)
+
 
 
 ...
 
-model = torch.nn.parallel.DistributedDataParallel(...)
-optimizer = 
-
-...
-
-
+ model = nn.Sequential(...).to(device)
+optimizer =  opt = FishLeg(
+        model,
+        draw,
+        nll,
+        aux_loader,
+        lr=eta_fl,
+        eps=eps,
+        beta=beta,
+        weight_decay=1e-5,
+        update_aux_every=10,
+        aux_lr=aux_eta,
+        aux_betas=(0.9, 0.999),
+        aux_eps=1e-8,
+        damping=damping,
+        pre_aux_training=25,
+        sgd_lr=eta_sgd,
+        device=device,
+    )
 
 ...
 ```
