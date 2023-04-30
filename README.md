@@ -24,8 +24,12 @@
 This library contains the official PyTorch implementation of the FishLeg optimizer as introduced in [Fisher-Legendre (FishLeg) optimization of deep neural networks ](https://openreview.net/pdf?id=c9lAOPvQHS).<br />
 FishLeg is a learnt second-order optimization method that uses natural gradients and ideas from Legendre-Fenchel duality to learn a direct and efficiently evaluated model for the product of the inverse Fisher with any vector in an online manner. Thanks to its generality, we expect FishLeg to facilitate handling various neural network architectures. The library's primary goal is to provide researchers and developers with an easy-to-use implementation of the FishLeg optimizer and curvature estimator.
 ## Installation
+FishLeg is written in pure Python, and only requires PyTorch > 1.8.
+The example scripts have additional requirements defined in src/requirements.txt.
+The FishLeg library do not requires dedicated installation. 
 
 ## Usage
+ 
 
 ## Citation
 ```
