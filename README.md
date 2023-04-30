@@ -74,7 +74,7 @@ optimizer =  opt = FishLeg(
 
 
 See [examples/autoencoder.py](examples/autoencoder.py) for an usage demostration. <br />
-See the FishLeg [documentation]("https://mtkresearch.github.io/FishLeg/) for a detailed list of parameters.
+See the FishLeg [documentation](https://mtkresearch.github.io) for a detailed list of parameters.
  
 
 ## Citation
