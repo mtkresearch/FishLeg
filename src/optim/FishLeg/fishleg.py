@@ -25,7 +25,7 @@ __all__ = [
 class FishLeg(Optimizer):
     r"""Implement FishLeg algorithm.
 
-    As described in ...
+    As described in https://openreview.net/forum?id=c9lAOPvQHS.
 
     :param torch.nn.Module model: a pytorch neural network module,
                 can be nested in a tree structure
