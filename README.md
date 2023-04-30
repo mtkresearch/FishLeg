@@ -36,7 +36,7 @@ See the FishLeg documentation for a detailed list of parameters.
 
 ## Citation
 ```
-@article{garcia2022yolov7,
+@article{garcia2022FishLeg,
   title={Fisher-Legendre (FishLeg) optimization of deep neural networks},
   author={Garcia, Jezabel R and Freddi, Federica and Fotiadis, Stathi1 and Li, Maolin and Vakili, Sattar, and Bernacchia, Alberto and Hennequin,Guillaume },
   journal={},
