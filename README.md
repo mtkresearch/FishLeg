@@ -47,7 +47,7 @@ optimizer =
 
 
 
-See examples/autoencoders.py for a usage demostration. See the FishLeg documentation for a detailed list of parameters.
+See examples/autoencoders.py (examples/autoencoders.py) for a usage demostration. See the FishLeg documentation for a detailed list of parameters.
  
 
 ## Citation
