@@ -26,7 +26,7 @@ FishLeg is a learnt second-order optimization method that uses natural gradients
 ## Installation
 FishLeg is written in pure Python, and only requires PyTorch > 1.8.<br />
 The example scripts have additional requirements defined in [examples/requirements.txt](examples/requirements.txt)<br />
-The FishLeg library do not requires dedicated installation. <br />
+The FishLeg library does not requires dedicated installation. <br />
 
 ## Usage
 FishLeg requires minimal code modifications to introduce it in existing training scripts. 
