@@ -48,7 +48,7 @@ likelihood = FISH_LIKELIHOODS["FixedGaussian".lower()](sigma=1.0, device=device)
 
 ...
 
- model = nn.Sequential(...).to(device)
+model = nn.Sequential(...).to(device)
 optimizer =  opt = FishLeg(
         model,
         draw,
@@ -73,7 +73,7 @@ optimizer =  opt = FishLeg(
 
 
 
-See [examples/autoencoder.py](examples/autoencoder.py) for a usage demostration. <br />
+See [examples/autoencoder.py](examples/autoencoder.py) for an usage demostration. <br />
 See the FishLeg documentation for a detailed list of parameters.
  
 
