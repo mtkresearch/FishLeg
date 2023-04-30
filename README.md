@@ -30,8 +30,24 @@ The FishLeg library do not requires dedicated installation. <br />
 
 ## Usage
 FishLeg requires minimal code modifications to introduce it in existing training scripts. 
+```Python
 
-See the FishLeg documentation for a detailed list of parameters.
+
+...
+
+model = torch.nn.parallel.DistributedDataParallel(...)
+optimizer = 
+
+...
+
+
+
+...
+```
+
+
+
+See examples/autoencoders.py for a usage demostration. See the FishLeg documentation for a detailed list of parameters.
  
 
 ## Citation
