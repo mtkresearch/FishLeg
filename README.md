@@ -114,7 +114,7 @@ Any contributions you make will be under the MIT Software License
 
 
 ### Report bugs using Github's [issues](https://github.com/mtkresearch/FishLeg/issues)
-We use GitHub issues to track public bugs. Report a bug by [opening a new issue](); it's that easy!
+We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://docs.github.com/en/issues/tracking-your-work-with-issues/creating-an-issue); it's that easy!
 
 #### Write bug reports with detail, background, and sample code
 
