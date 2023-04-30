@@ -116,7 +116,7 @@ Any contributions you make will be under the MIT Software License
 ### Report bugs using Github's [issues](https://github.com/briandk/transcriptase-atom/issues)
 We use GitHub issues to track public bugs. Report a bug by [opening a new issue](); it's that easy!
 
-### Write bug reports with detail, background, and sample code
+#### Write bug reports with detail, background, and sample code
 
 **Great Bug Reports** tend to have:
 
