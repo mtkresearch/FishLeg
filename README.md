@@ -31,7 +31,7 @@ The FishLeg library do not requires dedicated installation. <br />
 ## Usage
 FishLeg requires minimal code modifications to introduce it in existing training scripts. 
 
-See the FishLeg docstring for a detailed list of parameters.
+See the FishLeg documentation for a detailed list of parameters.
  
 
 ## Citation
