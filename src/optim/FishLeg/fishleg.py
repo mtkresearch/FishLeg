@@ -8,6 +8,8 @@ from torch.optim import Optimizer, Adam
 import sys
 import regex as re
 from functools import partial
+import csv
+import os
 from transformers.models.bert.modeling_bert import BertAttention
 
 from .utils import recursive_setattr, recursive_getattr, update_dict, get_named_layers_by_regex, NamedLayer
@@ -430,11 +432,8 @@ class FishLeg(Optimizer):
     def pretrain_fish(
         self,
         dataloader: torch.utils.data.DataLoader,
-        loss: Callable[[
-                nn.Module, 
-                Tuple[torch.Tensor, 
-                      torch.Tensor]
-                ], torch.Tensor],
+        loss: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
+        output_dir: str,
         iterations: int = 10000,
         difference: bool = False,
         verbose: bool = False,
@@ -443,66 +442,81 @@ class FishLeg(Optimizer):
         fisher: bool = True
     ) -> List:
 
+        
         aux_losses = []
         aux, checks = 0, 0
-        for pre in range(iterations):
-            self.zero_grad()
-            batch = next(iter(dataloader))
-            batch = self._prepare_input(batch)
-            loss(self.model, batch).backward()
-            self._store_u(new=True)
+        with open(
+            os.path.join(output_dir, "pretrain.csv"), "w", newline=""
+        ) as csv_file:
+            fieldnames = ['batch_auxloss', 'batch_check', 'auxloss', 'check', 'linear', 'quad', 'reg', 'g2']
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer.writeheader()
             
-            if difference:
+            for pre in range(iterations):
                 self.zero_grad()
                 batch = next(iter(dataloader))
                 batch = self._prepare_input(batch)
                 loss(self.model, batch).backward()
-                self._store_u(alpha=-1.0)
+                self._store_u(new=True)
 
-            info = self.update_aux(fisher=fisher)
-            aux_loss = info[0].detach().cpu().numpy()
-            check = info[1].detach().cpu().numpy()
-            linear_term = info[2].detach().cpu().numpy()
-            aux_losses.append(aux_loss + 0.5 * linear_term)
+                if difference:
+                    self.zero_grad()
+                    batch = next(iter(dataloader))
+                    batch = self._prepare_input(batch)
+                    loss(self.model, batch).backward()
+                    self._store_u(alpha=-1.0)
 
-            if verbose:
-                aux += aux_loss
-                checks += check
-                if pre % batch_size == 0:
-                    info = [e.detach().cpu().numpy() for e in info]
-                    if pre > 0: checks = checks / batch_size
-                    if testloader is not None:
-                        test_checks = 0
-                        for _ in range(100):
-                            self.zero_grad()
-                            test_batch = next(iter(testloader))
-                            test_batch = self._prepare_input(test_batch)
-                            loss(self.model, test_batch).backward()
-                            self._store_u(new=True)
-                        
-                            if difference:
+                info = self.update_aux(fisher=fisher)
+                aux_loss = info[0].detach().cpu().numpy()
+                check = info[1].detach().cpu().numpy()
+                linear_term = info[2].detach().cpu().numpy()
+                aux_losses.append(aux_loss + 0.5 * linear_term)
+
+                if verbose:
+                    aux += aux_loss + 0.5 * linear_term
+                    checks += check
+                    if pre % batch_size == 0 and pre > 0:
+                        info = [e.detach().cpu().numpy() for e in info]
+                        checks = checks / batch_size
+                        aux = aux / batch_size
+
+                        if testloader is not None:
+                            test_checks = 0
+                            for _ in range(100):
                                 self.zero_grad()
                                 test_batch = next(iter(testloader))
                                 test_batch = self._prepare_input(test_batch)
                                 loss(self.model, test_batch).backward()
-                                self._store_u(alpha=-1.0)
+                                self._store_u(new=True)
 
-                            test_info = self.update_aux(fisher=fisher,train=False)
-                            test_checks += test_info[1].detach().cpu().numpy()
+                                if difference:
+                                    self.zero_grad()
+                                    test_batch = next(iter(testloader))
+                                    test_batch = self._prepare_input(test_batch)
+                                    loss(self.model, test_batch).backward()
+                                    self._store_u(alpha=-1.0)
 
-                        print(
-                            "iter:{:d}, \t train:{:.2f} \t test:{:.2f} \t auxloss:{:.2f} check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                pre, checks, test_checks / 100, *info
+                                test_info = self.update_aux(fisher=fisher, train=False)
+                                test_checks += test_info[1].detach().cpu().numpy()
+
+                            print(
+                                "iter:{:d}, \t train:{:.2f} \t test:{:.2f} \t auxloss:{:.2f} check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                                    pre, checks, test_checks / 100, *info
+                                )
                             )
-                        )
-                    else:
-                        print(
-                            "iter:{:d}, \t train:{:.2f} \t auxloss:{:.2f} \tcheck:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                pre, checks, *info
+                        else:
+                            print(
+                                    "iter:{:d}, \t BATCH auxloss:{:.2f} check:{:.2f} \t auxloss:{:.2f} \tcheck:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                                    pre, aux, checks, *info
+                                )
                             )
-                        )
-                    aux = 0
-                    checks = 0
+                            row = {'batch_auxloss': aux, 'batch_check': checks}
+                            for name, value in zip(['auxloss', 'check', 'linear', 'quad', 'reg', 'g2'], info):
+                                row[name]=value
+                            writer.writerow(row)
+
+                        aux = 0
+                        checks = 0
 
         return aux_losses
 
