@@ -126,7 +126,7 @@ class FishLeg(Optimizer):
         nll: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
         aux_dataloader: torch.utils.data.DataLoader,
         likelihood: FishLikelihood = None,
-        fish_lr: float = 5e-2,
+        lr: float = 5e-2,
         damping: float = 5e-1,
         weight_decay: float = 1e-5,
         beta: float = 0.9,
@@ -151,7 +151,7 @@ class FishLeg(Optimizer):
         verbose = False
     ) -> None:
         self.model = model
-        self.fish_lr = fish_lr
+        self.lr = lr
         self.device = device
         self.batch_speedup = batch_speedup
         self.full = full
@@ -175,7 +175,7 @@ class FishLeg(Optimizer):
                             skip_names=skip_names,
                             config=config
                         )
-        defaults = dict(lr=aux_lr, fish_lr=fish_lr)
+        defaults = dict(aux_lr=aux_lr, lr=lr)
         super(FishLeg, self).__init__(param_groups, defaults)
 
         if self.warmup > 0:
@@ -353,7 +353,7 @@ class FishLeg(Optimizer):
                     if self.batch_speedup
                     else partial(module.Qv, full=self.full),
                     "order": module.order,
-                    "name": module_name,
+                    "name": named_layer.layer_name,
                     "module": module,
                 }
             if self.fine_tune:
@@ -527,6 +527,7 @@ class FishLeg(Optimizer):
                     group["grad"][i].copy_(torch.randn_like(p.data) * scale)
                 else:
                     grad = transform(p.grad.data)
+                    
                     if not new:
                         group["grad"][i].add_(grad, alpha=alpha)
                     else:
@@ -619,7 +620,16 @@ class FishLeg(Optimizer):
         if self.update_aux_every > 0:
             if self.step_t % self.update_aux_every == 0:
                 self._store_u(new=True)
-                self.update_aux()
+                info = self.update_aux()
+                info = [e.detach().cpu().numpy() for e in info]
+
+                if self.verbose==True:
+                    if self.step_t % 100 == 0:
+                        print(
+                                "iter:{:d}, lr:{:.2f} \tauxloss:{:.2f} \tcheck:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                                    self.step_t,  self.param_groups[0]["lr"], *info
+                                )
+                            )
                 self.updated = True
         elif self.update_aux_every < 0:
             self._store_u(new=True)
@@ -648,14 +658,14 @@ class FishLeg(Optimizer):
                     ):
                         gbar.copy_(self.beta * gbar + (1.0 - self.beta) * d_p)
                         delta = gbar.add(p - p0, alpha=self.weight_decay)
-                        p.add_(delta, alpha=-self.fish_lr)
+                        p.add_(delta, alpha=-group["lr"])
                 else:
                     for p, d_p, gbar in zip(
                         group["params"], nat_grad, group["gradbar"]
                     ):
                         gbar.copy_(self.beta * gbar + (1.0 - self.beta) * d_p)
-                        delta = gbar.add(p, alpha=self.weight_decay / self.fish_lr)
-                        p.add_(delta, alpha=-self.fish_lr)
+                        delta = gbar.add(p, alpha=self.weight_decay / group["lr"])
+                        p.add_(delta, alpha=-group["lr"])
 
     @torch.no_grad()
     def _save_input(
