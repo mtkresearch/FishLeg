@@ -278,6 +278,18 @@ class FishLeg(Optimizer):
                     elif self.initialization == "zero": # fill with zeros for adapters
                         module.weight.data.zero_()
                         module.bias.data.zero_()
+                elif isinstance(module, nn.Embedding):
+                    replace = FishEmbedding(
+                            num_embeddings=module.num_embeddings,
+                            embedding_dim=module.embedding_dim,
+                            padding_idx=module.padding_idx,
+                            max_norm=module.max_norm,
+                            norm_type=module.norm_type,
+                            scale_grad_by_freq=module.scale_grad_by_freq,
+                            sparse=module.sparse,
+                            device=self.device,
+                    )
+                    replace = update_dict(replace, module)
                 elif isinstance(module, nn.Conv2d):
                     replace = FishConv2d(
                             in_channels=module.in_channels,
@@ -624,7 +636,7 @@ class FishLeg(Optimizer):
                 info = [e.detach().cpu().numpy() for e in info]
 
                 if self.verbose==True:
-                    if self.step_t % 100 == 0:
+                    if self.step_t % 200 == 0:
                         print(
                                 "iter:{:d}, lr:{:.2f} \tauxloss:{:.2f} \tcheck:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
                                     self.step_t,  self.param_groups[0]["lr"], *info
