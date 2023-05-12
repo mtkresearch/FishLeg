@@ -1,5 +1,6 @@
 from typing import Tuple
 import torch
+import numpy as np
 from torch.nn import ParameterDict, Parameter
 
 from transformers.models.bert.modeling_bert import BertAttention
@@ -9,8 +10,7 @@ class FishBertAttention(BertAttention, FishModule):
     def __init__(
         self,
         config,
-        position_embedding_type=None, ##?
-        init_scale = 1.0,
+        position_embedding_type=None, 
         device = None,
         dtype = None,
     ) -> None:
@@ -20,36 +20,38 @@ class FishBertAttention(BertAttention, FishModule):
 
         self._layer_name = "BertSelfAttention"
         self.all_head_size, self.hidden_size = self.self.key.weight.shape
-
-        eff_scale = init_scale ** (1.0 / 8)
         self.fishleg_aux = ParameterDict(
             {
-                "L": Parameter(torch.eye(self.hidden_size + 1) * eff_scale),
-                "R": Parameter(torch.eye(self.hidden_size + 1) * eff_scale),
-                "U": Parameter(torch.eye(self.hidden_size) * eff_scale),
-                "A": Parameter(torch.eye(self.hidden_size + 1) * eff_scale),
-                "B": Parameter(torch.eye(self.hidden_size + 1) * eff_scale),
-                "C": Parameter(torch.eye(self.hidden_size + 1) * eff_scale),
-                "D": Parameter(torch.eye(self.hidden_size) * eff_scale),
+                "L": Parameter(torch.eye(self.hidden_size + 1)),
+                "R": Parameter(torch.eye(self.hidden_size + 1)),
+                "U": Parameter(torch.eye(self.hidden_size)),
+                "A": Parameter(torch.eye(self.hidden_size + 1)),
+                "B": Parameter(torch.eye(self.hidden_size + 1)),
+                "C": Parameter(torch.eye(self.hidden_size + 1)),
+                "D": Parameter(torch.eye(self.hidden_size)),
 
                 "K": Parameter(
                         torch.cat([
-                            torch.eye(self.hidden_size) * eff_scale,
+                            torch.eye(self.hidden_size),
                             torch.zeros(1, self.hidden_size)
                         ], dim=0)
                     ),
                 "Q": Parameter(
                         torch.cat([
-                            torch.eye(self.hidden_size) * eff_scale,
+                            torch.eye(self.hidden_size),
                             torch.zeros(self.hidden_size, 1)
                         ], dim=-1)
                     ),
                 "V": Parameter(
-                        torch.eye(self.hidden_size + 1) * eff_scale,
+                        torch.eye(self.hidden_size + 1),
                     ),
                 "O": Parameter(
-                        torch.eye(self.hidden_size) * eff_scale,
-                    )
+                        torch.eye(self.hidden_size),
+                    ),
+                "Sk": Parameter(torch.ones(self.hidden_size +1, self.hidden_size)),
+                "Sq": Parameter(torch.ones(self.hidden_size, self.hidden_size +1)),
+                "Sv": Parameter(torch.ones(self.hidden_size, self.hidden_size +1)),
+                "So": Parameter(torch.ones(self.hidden_size, self.hidden_size +1))
             }
         )
 
@@ -61,15 +63,44 @@ class FishBertAttention(BertAttention, FishModule):
             ]
         self.device = device
 
+    def warmup(
+        self,
+        v: Tuple = None,
+        batch_speedup: bool = False,
+        init_scale: float = 1.0,
+    ) -> None:
+        if v is None:
+            self.fishleg_aux["Sk"].data.mul_(np.sqrt(init_scale))
+            self.fishleg_aux["Sq"].data.mul_(np.sqrt(init_scale))
+            self.fishleg_aux["Sv"].data.mul_(np.sqrt(init_scale))
+            self.fishleg_aux["So"].data.mul_(np.sqrt(init_scale))
+        else:
+            self.fishleg_aux["Sk"].data.copy_(
+                torch.cat([v[0], v[1][:, None]], dim=-1).T
+            )
+            self.fishleg_aux["Sq"].data.copy_(
+                torch.cat([v[2], v[3][:, None]], dim=-1)
+            )
+            self.fishleg_aux["Sv"].data.copy_(
+                torch.cat([v[4], v[5][:, None]], dim=-1)
+            )
+            self.fishleg_aux["So"].data.copy_(
+                torch.cat([v[6], v[7][:, None]], dim=-1)
+            )
     
     def Qv(self, v: Tuple, full=False) -> Tuple:
-        Uk = torch.transpose(
+        Sk = self.fishleg_aux["Sk"]
+        Sq = self.fishleg_aux["Sq"]
+        Sv = self.fishleg_aux["Sv"]
+        So = self.fishleg_aux["So"]
+
+        Uk = Sk * torch.transpose(
                 torch.cat([v[0], v[1][:, None]], dim=-1),
                 -1,-2
             )
-        Uq = torch.cat([v[2], v[3][:, None]], dim=-1)
-        Uv = torch.cat([v[4], v[5][:, None]], dim=-1)
-        Uo = torch.cat([v[6], v[7][:, None]], dim=-1)
+        Uq = Sq * torch.cat([v[2], v[3][:, None]], dim=-1)
+        Uv = Sv * torch.cat([v[4], v[5][:, None]], dim=-1)
+        Uo = So * torch.cat([v[6], v[7][:, None]], dim=-1)
 
         zkq = torch.linalg.multi_dot((
                 self.fishleg_aux["A"].T,
@@ -104,7 +135,7 @@ class FishBertAttention(BertAttention, FishModule):
         ))
 
         Vk = torch.transpose(
-            torch.linalg.multi_dot((
+             Sk * torch.linalg.multi_dot((
                 self.fishleg_aux["A"],
                 zkq,
                 self.fishleg_aux["Q"].T
@@ -112,19 +143,19 @@ class FishBertAttention(BertAttention, FishModule):
             -1,-2
         )
 
-        Vq = torch.linalg.multi_dot((
+        Vq = Sq * torch.linalg.multi_dot((
                 self.fishleg_aux["K"].T,
                 zkq,
                 self.fishleg_aux["B"]
         ))
 
-        Vv = torch.linalg.multi_dot((
+        Vv = Sv * torch.linalg.multi_dot((
                 self.fishleg_aux["O"].T,
                 zvo,
                 self.fishleg_aux["C"]
         ))
 
-        Vo = torch.linalg.multi_dot((
+        Vo = So * torch.linalg.multi_dot((
                 self.fishleg_aux["D"],
                 zvo,
                 self.fishleg_aux["V"].T
@@ -142,16 +173,30 @@ class FishBertAttention(BertAttention, FishModule):
         U = self.fishleg_aux["U"]
         R = self.fishleg_aux["R"]
 
+        #K: (in+1, out)
+        #Sk: (in+1, out)
+        #diagk: column-wise, in+1, in+1, ..., in+1
+        #Sk -> (out, in+1), -> -1 -> in+1, in+1, ..., in+1
+
+        #Q: (out, in+1)
+        #Sq: (out, in+1)
+        #diagq: out, out, ..., bias 
+        #Sq -> (in+1, out), -> -1 -> out, out, ..., bias
+
         diagk = torch.kron(torch.sum(self.fishleg_aux["Q"]@L, dim=-1), 
-                        torch.sum(self.fishleg_aux["A"]@R, dim=-1))
+                        torch.sum(self.fishleg_aux["A"]@R, dim=-1)) * \
+                torch.square(self.fishleg_aux["Sk"].T).reshape(-1)
+
         diagq = torch.kron(torch.sum(self.fishleg_aux["B"].T@L, dim=-1), 
-                        torch.sum(self.fishleg_aux["K"].T@R, dim=-1))
+                        torch.sum(self.fishleg_aux["K"].T@R, dim=-1)) * \
+                torch.square(self.fishleg_aux["Sq"].T).reshape(-1)
 
         diagv = torch.kron(torch.sum(self.fishleg_aux["C"].T@L, dim=-1), 
-                        torch.sum(self.fishleg_aux["O"].T@U, dim=-1))
+                        torch.sum(self.fishleg_aux["O"].T@U, dim=-1)) * \
+                torch.square(self.fishleg_aux["Sv"].T).reshape(-1)
         diago = torch.kron(torch.sum(self.fishleg_aux["V"]@L, dim=-1), 
-                        torch.sum(self.fishleg_aux["D"]@U, dim=-1))
-        
+                        torch.sum(self.fishleg_aux["D"]@U, dim=-1)) * \
+                torch.square(self.fishleg_aux["So"].T).reshape(-1)
 
         K = diagk.reshape(self.all_head_size, self.hidden_size + 1)
         Q = diagq.reshape(self.hidden_size + 1, self.all_head_size).T
