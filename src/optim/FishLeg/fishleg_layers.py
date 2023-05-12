@@ -10,9 +10,10 @@ from typing import Any, List, Dict, Tuple, Callable, Optional
 
 __all__ = [
     "FishLinear",
+    "FishEmbedding",
     "FishConv2d",
     "FishBatchNorm2d",
-    "FishLayerNorm"
+    "FishLayerNorm",
 ]
 
 
@@ -170,7 +171,6 @@ class FishLinear(nn.Linear, FishModule):
         R = self.fishleg_aux["R"]
         u = torch.cat([v[0], v[1][:, None]], dim=-1)
 
-        
         A = self.fishleg_aux["A"]
         u = A * u
         u = torch.linalg.multi_dot((R.T, R, u, L, L.T))
@@ -233,20 +233,83 @@ class FishLinear(nn.Linear, FishModule):
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
         diag = torch.kron(torch.sum(L * L, dim=1), torch.sum(R * R, dim=0))
-        diag = diag * \
-                torch.square(self.fishleg_aux["A"].T).reshape(-1)
+        diag = diag * torch.square(self.fishleg_aux["A"].T).reshape(-1)
 
         diag = diag.reshape(L.shape[0], R.shape[0]).T
-        return (
-            diag[:, :-1], diag[:, -1]
+        return (diag[:, :-1], diag[:, -1])
+
+
+class FishEmbedding(nn.Embedding, FishModule):
+    def __init__(
+        self,
+        num_embeddings: int,
+        embedding_dim: int,
+        padding_idx: Optional[int] = None,
+        max_norm: Optional[float] = None,
+        norm_type: float = 2,
+        scale_grad_by_freq: bool = False,
+        sparse: bool = False,
+        _weight: Optional[Tensor] = None,
+        device=None,
+        dtype=None,
+    ) -> None:
+        super().__init__(
+            num_embeddings,
+            embedding_dim,
+            padding_idx,
+            max_norm,
+            norm_type,
+            scale_grad_by_freq,
+            sparse,
+            _weight,
+            device,
+            dtype,
         )
 
-    def save_layer_input(self, input_: List[Tensor]) -> None:
-        a = input_[0].to(self.device).clone()
-        a = a.view(-1, a.size(-1))
-        if self.bias is not None:
-            a = torch.cat([a, a.new_ones((*a.shape[:-1], 1))], dim=-1)
-        self._a = a
+        self._layer_name = "Embedding"
+        self.fishleg_aux = ParameterDict(
+            {
+                "L": Parameter(torch.eye(embedding_dim)),
+                "R": Parameter(torch.ones(num_embeddings)),
+                "A": Parameter(torch.ones(num_embeddings, embedding_dim)),
+            }
+        )
+
+        self.order = [
+            "weight",
+        ]
+        self.device = device
+
+    def warmup(
+        self,
+        v: Tuple[Tensor,] = None,
+        init_scale: float = 1.0,
+        batch_speedup: bool = False,
+    ) -> None:
+        if v is None:
+            self.fishleg_aux["A"].data.mul_(np.sqrt(init_scale))
+        else:
+            self.fishleg_aux["A"].data.copy_(v[0])
+
+    def Qv(self, v: Tuple[Tensor,], full: bool = False) -> Tuple[Tensor,]:
+        L = self.fishleg_aux["L"]
+        R = self.fishleg_aux["R"]
+        u = v[0]
+
+        A = self.fishleg_aux["A"]
+        u = A * u
+        u = torch.linalg.multi_dot((torch.diag(R), torch.diag(R), u, L, L.T))
+        u = A * u
+        return (u,)
+
+    def diagQ(self) -> Tuple:
+        L = self.fishleg_aux["L"]
+        R = self.fishleg_aux["R"]
+        diag = torch.kron(torch.sum(L * L, dim=1), R * R)
+        diag = diag * torch.square(self.fishleg_aux["A"].T).reshape(-1)
+
+        diag = diag.reshape(L.shape[0], R.shape[0]).T
+        return (diag,)
 
     def save_layer_grad_output(
         self,
@@ -277,12 +340,22 @@ class FishLinear(nn.Linear, FishModule):
         self.in_channels_eff = self.in_channels / self.groups
         self.k_size = self.kernel_size[0] * self.kernel_size[1]
         self.fishleg_aux = ParameterDict(
-                {
-                    "L": Parameter(torch.eye(int(bias) + self.in_channels_eff * self.k_size, device=device)),
-                    "R": Parameter(torch.eye(out_channels, device=device)),
-                    "A": Parameter(torch.ones(out_channels, int(bias) + self.in_channels_eff * self.k_size, device=device)),
-                }
-            )
+            {
+                "L": Parameter(
+                    torch.eye(
+                        int(bias) + self.in_channels_eff * self.k_size, device=device
+                    )
+                ),
+                "R": Parameter(torch.eye(out_channels, device=device)),
+                "A": Parameter(
+                    torch.ones(
+                        out_channels,
+                        int(bias) + self.in_channels_eff * self.k_size,
+                        device=device,
+                    )
+                ),
+            }
+        )
         self.order = ["weight", "bias"] if bias else ["weight"]
         self._bias = bias
 
@@ -300,17 +373,15 @@ class FishLinear(nn.Linear, FishModule):
                 b = torch.reshape(b, (self.out_channels, 1))
                 A = torch.cat([w, b], dim=-1)
             else:
-                w, = v
+                (w,) = v
                 A = torch.reshape(w, (self.out_channels, -1))
- 
-            self.fishleg_aux["A"].data.copy_(A)
 
+            self.fishleg_aux["A"].data.copy_(A)
 
     def Qv(
         self, v: Tuple[Tensor, Optional[Tensor]], full: bool = False
     ) -> Tuple[Tensor, Optional[Tensor]]:
-        """Inspired by KFAC's conv2D layer by Grosse and Martens: Kronecker product of sizes (out_channels ⊗  (in_channels_eff * k_size))
-        """
+        """Inspired by KFAC's conv2D layer by Grosse and Martens: Kronecker product of sizes (out_channels ⊗  (in_channels_eff * k_size))"""
 
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
@@ -324,7 +395,7 @@ class FishLinear(nn.Linear, FishModule):
             b = torch.reshape(b, (self.out_channels, 1))
             u = torch.cat([w, b], dim=-1)
         else:
-            w, = v
+            (w,) = v
             sw = w.shape
             u = torch.reshape(w, (self.out_channels, -1))
 
@@ -336,8 +407,7 @@ class FishLinear(nn.Linear, FishModule):
         if self._bias:
             return (torch.reshape(u[:, :-1], sw), torch.reshape(u[:, -1], sb))
         else:
-            return (torch.reshape(u, sw), )
-
+            return (torch.reshape(u, sw),)
 
     def diagQ(self) -> Tensor:
         """Similar maths as the Linear layer"""
@@ -347,65 +417,96 @@ class FishLinear(nn.Linear, FishModule):
         A = self.fishleg_aux["A"]
 
         diagA = torch.reshape(A.T, (-1))
-        diag = diagA * torch.kron(torch.sum(torch.square(L), dim=0), torch.sum(torch.square(R), dim=0))
+        diag = diagA * torch.kron(
+            torch.sum(torch.square(L), dim=0), torch.sum(torch.square(R), dim=0)
+        )
 
         if self._bias:
             w = diag[: -self.out_channels]
             b = diag[-self.out_channels :]
-            w = torch.reshape(w, (self.in_channels_eff * self.k_size, self.out_channels))
-            w = torch.reshape(w.T, (self.out_channels, self.in_channels_eff, self.kernel_size[0], self.kernel_size[1]))
+            w = torch.reshape(
+                w, (self.in_channels_eff * self.k_size, self.out_channels)
+            )
+            w = torch.reshape(
+                w.T,
+                (
+                    self.out_channels,
+                    self.in_channels_eff,
+                    self.kernel_size[0],
+                    self.kernel_size[1],
+                ),
+            )
             b = torch.reshape(b, (self.out_channels))
             return (w, b)
         else:
-            w = torch.reshape(w, (self.in_channels_eff * self.k_size, self.out_channels))
-            w = torch.reshape(w.T, (self.out_channels, self.in_channels_eff, self.kernel_size[0], self.kernel_size[1]))
-            return (w, )
+            w = torch.reshape(
+                w, (self.in_channels_eff * self.k_size, self.out_channels)
+            )
+            w = torch.reshape(
+                w.T,
+                (
+                    self.out_channels,
+                    self.in_channels_eff,
+                    self.kernel_size[0],
+                    self.kernel_size[1],
+                ),
+            )
+            return (w,)
 
 
 class FishBatchNorm2d(nn.BatchNorm2d, FishModule):
-
-    def __init__(self, num_features: int, 
-                       eps: float = 0.00001, 
-                       momentum: float = 0.1, 
-                       affine: bool = True, 
-                       track_running_stats: bool = True, 
-                       init_scale = 1.0,
-                       device=None, 
-                       dtype=None) -> None:
-
-        super().__init__(num_features, eps, momentum, affine, track_running_stats, device, dtype)()
+    def __init__(
+        self,
+        num_features: int,
+        eps: float = 0.00001,
+        momentum: float = 0.1,
+        affine: bool = True,
+        track_running_stats: bool = True,
+        init_scale=1.0,
+        device=None,
+        dtype=None,
+    ) -> None:
+        super().__init__(
+            num_features, eps, momentum, affine, track_running_stats, device, dtype
+        )()
         self._layer_name = "BatchNorm2d"
         if affine:
             self.fishleg_aux = ParameterDict(
                 {
-                "L_w": Parameter(torch.ones((num_features,), device=device) * np.sqrt(init_scale)),
-                "L_b": Parameter(torch.ones((num_features,), device=device) * np.sqrt(init_scale)),
+                    "L_w": Parameter(
+                        torch.ones((num_features,), device=device) * np.sqrt(init_scale)
+                    ),
+                    "L_b": Parameter(
+                        torch.ones((num_features,), device=device) * np.sqrt(init_scale)
+                    ),
                 }
             )
 
         self.order = ["weight", "bias"]
 
     def Qv(self, v: Tuple, full=False):
-
         return (
-            torch.square(self.fishleg_aux['L_w']) * v[0],
-            torch.square(self.fishleg_aux['L_b']) * v[1]
+            torch.square(self.fishleg_aux["L_w"]) * v[0],
+            torch.square(self.fishleg_aux["L_b"]) * v[1],
         )
 
     def diagQ(self):
         return (
-            torch.square(self.fishleg_aux['L_w']),
-            torch.square(self.fishleg_aux['L_b'])
+            torch.square(self.fishleg_aux["L_w"]),
+            torch.square(self.fishleg_aux["L_b"]),
         )
 
-class FishLayerNorm(nn.LayerNorm, FishModule):
 
-    def __init__(self, normalized_shape, 
-                       eps: float = 0.00001, 
-                       elementwise_affine: bool = True, 
-                       init_scale = 1.0,
-                       device=None, 
-                       dtype=None) -> None:
+class FishLayerNorm(nn.LayerNorm, FishModule):
+    def __init__(
+        self,
+        normalized_shape,
+        eps: float = 0.00001,
+        elementwise_affine: bool = True,
+        init_scale=1.0,
+        device=None,
+        dtype=None,
+    ) -> None:
         super().__init__(normalized_shape, eps, elementwise_affine, device, dtype)
 
         self._layer_name = "LayerNorm"
@@ -413,22 +514,27 @@ class FishLayerNorm(nn.LayerNorm, FishModule):
         if elementwise_affine:
             self.fishleg_aux = ParameterDict(
                 {
-                "L_w": Parameter(torch.ones(normalized_shape, device=device) * np.sqrt(init_scale)),
-                "L_b": Parameter(torch.ones(normalized_shape, device=device) * np.sqrt(init_scale)),
+                    "L_w": Parameter(
+                        torch.ones(normalized_shape, device=device)
+                        * np.sqrt(init_scale)
+                    ),
+                    "L_b": Parameter(
+                        torch.ones(normalized_shape, device=device)
+                        * np.sqrt(init_scale)
+                    ),
                 }
             )
 
         self.order = ["weight", "bias"]
 
     def Qv(self, v: Tuple, full=False):
-
         return (
-            torch.square(self.fishleg_aux['L_w']) * v[0],
-            torch.square(self.fishleg_aux['L_b']) * v[1]
+            torch.square(self.fishleg_aux["L_w"]) * v[0],
+            torch.square(self.fishleg_aux["L_b"]) * v[1],
         )
 
     def diagQ(self):
         return (
-            torch.square(self.fishleg_aux['L_w']),
-            torch.square(self.fishleg_aux['L_b'])
+            torch.square(self.fishleg_aux["L_w"]),
+            torch.square(self.fishleg_aux["L_b"]),
         )
