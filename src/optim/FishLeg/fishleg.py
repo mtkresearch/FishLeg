@@ -459,8 +459,8 @@ class FishLeg(Optimizer):
         self.aux_opt.zero_grad()
         with torch.no_grad():
             data_x, data_y = data
-            samples_y = self.model(data_x)
-            samples = (data_x, self.likelihood.draw(samples_y))
+            pred_y = self.model(data_x)
+            samples_y = self.likelihood.draw(pred_y)
 
         g2 = 0.0
         for group in self.param_groups:
@@ -469,7 +469,7 @@ class FishLeg(Optimizer):
         g_norm = torch.sqrt(g2)
 
         self.zero_grad()
-        self.likelihood.nll(samples_y, samples[1]).backward()
+        self.likelihood.nll(pred_y, samples_y).backward()
         
         if self.grad_clip:
             nn.utils.clip_grad_norm_(
@@ -517,12 +517,15 @@ class FishLeg(Optimizer):
         return aux_loss, check, linear_term, quad_term, reg_term, g2
 
     def step(self, closure=None) -> None:
-        """Performes a single optimization step of FishLeg."""
+        """
+        Performes a single optimization step of FishLeg.
+        """
         self.updated = False
 
         if self.update_aux_every > 0:
             if self.step_t % self.update_aux_every == 0:
                 self._store_u(new=True)
+
             if self.step_t % self.update_aux_every == 1:
                 # once for difference of gradients
                 self._store_u(alpha=-1.0)
@@ -536,28 +539,35 @@ class FishLeg(Optimizer):
                                 self.step_t, self.fish_lr, *info
                             )
                         )
+
                 self.updated = True
+
             if self.step_t % self.update_aux_every == 2:
                 # once for gradient
                 self._store_u(new=True)
                 self.update_aux()
                 self.updated = True
+            
         elif self.update_aux_every < 0:
             self._store_u(new=True)
+
             for _ in range(-self.update_aux_every):
                 self.update_aux()
+
             self.updated = True
 
         self.step_t += 1
 
         for group in self.param_groups:
             name = group["name"]
+
             with torch.no_grad():
                 nat_grad = group["Qv"](
                     group["u"]
                     if self.updated
                     else [p.grad.data for p in group["params"]]
                 )
+            
                 for p, d_p, gbar in zip(group["params"], nat_grad, group["gradbar"]):
                     gbar.copy_(self.beta * gbar + (1.0 - self.beta) * d_p)
                     delta = gbar.add(p, alpha=self.weight_decay)
@@ -569,19 +579,14 @@ class FishLeg(Optimizer):
         module: torch.nn.Module,
         input_: List[torch.Tensor],
     ) -> None:
-        if not module.training:
-            return
-        if self.store_g:
+        if self.store_g and module.training:
             module.save_layer_input(input_)
 
     @torch.no_grad()
     def _save_grad_output(
         self,
         module: torch.nn.Module,
-        grad_input: Union[Tuple[torch.Tensor, ...], torch.Tensor],
         grad_output: Union[Tuple[torch.Tensor, ...], torch.Tensor],
     ) -> None:
-        if not module.training:
-            return
-        if self.store_g:
+        if self.store_g and module.training:
             module.save_layer_grad_output(grad_output)
