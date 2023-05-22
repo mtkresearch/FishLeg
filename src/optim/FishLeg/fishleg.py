@@ -7,7 +7,6 @@ from torch.nn import init
 from torch.optim import Optimizer, Adam
 import sys
 import regex as re
-from functools import partial
 import csv
 import os
 from transformers.models.bert.modeling_bert import BertAttention
@@ -37,14 +36,6 @@ class FishLeg(Optimizer):
 
     :param torch.nn.Module model: a pytorch neural network module,
                 can be nested in a tree structure
-    :param Callable[[nn.Module, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]] draw:
-                Sampling function that takes a model :math:`f` and input data :math:`\mathbf X`,
-                and returns :math:`(\mathbf X, \mathbf y)`,
-                where :math:`\mathbf y` is sampled from
-                the conditional distribution :math:`p(\mathbf y|f(\mathbf X))`
-    :param Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor] nll:
-                A function that takes a model and data, and evaluate the negative
-                log-likelihood.
     :param torch.utiles.data.DataLoader aux_dataloader:
                 A function that takes a batch size as input and output dataset
                 with corresponding size.
@@ -87,13 +78,7 @@ class FishLeg(Optimizer):
         >>>
         >>> likelihood = FixedGaussianLikelihood(sigma=1.0)
         >>>
-        >>> def nll(model, data_x, data_y):
-        >>>     pred_y = model.forward(data_x)
-        >>>     return likelihood.nll(data_y, pred_y)
         >>>
-        >>> def draw(model, data_x):
-        >>>     pred_y = model.forward(data_x)
-        >>>     return likelihood.draw(pred_y)
         >>>
         >>> model = nn.Sequential(
         >>>     nn.Linear(2, 5),
@@ -103,7 +88,6 @@ class FishLeg(Optimizer):
         >>>
         >>> opt = FishLeg(
         >>>     model,
-        >>>     draw,
         >>>     nll,
         >>>     aux_loader
         >>> )
@@ -122,8 +106,6 @@ class FishLeg(Optimizer):
     def __init__(
         self,
         model: nn.Module,
-        draw: Callable[[nn.Module, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-        nll: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
         aux_dataloader: torch.utils.data.DataLoader,
         likelihood: FishLikelihood = None,  # Is this optional??
         lr: float = 5e-2,
@@ -135,7 +117,7 @@ class FishLeg(Optimizer):
         aux_betas: Tuple[float, float] = (0.9, 0.999),
         aux_eps: float = 1e-8,
         normalize_aux: bool = False,
-        module_names: List[str] = [],  # This should be __ALL__ or something similar
+        module_names: str = "__ALL__",  # This should be __ALL__ or something similar
         initialization: str = "uniform",
         fish_scale: float = 1.0,
         grad_clip: bool = False,
@@ -144,8 +126,6 @@ class FishLeg(Optimizer):
         verbose: bool = False,
     ) -> None:
         self.model = model
-        self.draw = draw
-        self.nll = nll
 
         self.aux_dataloader = aux_dataloader
         self.likelihood = likelihood
@@ -196,12 +176,11 @@ class FishLeg(Optimizer):
         self.step_t = 0
         self.store_g = True
 
+    # I think we should demand a Fisher model be constructed outside the optimizer before being passed in.
     def init_model_aux(
         self,
         model: nn.Module,
-        module_names: List[str],
-        skip_names: List[str],
-        config=None,
+        module_names: str,
     ) -> Union[nn.Module, List]:
         """Given a model to optimize, parameters can be devided to
 
@@ -223,7 +202,7 @@ class FishLeg(Optimizer):
             )
 
         # Add auxiliary parameters
-        if len(module_names) == 0 or module_names[0] == "re:*":
+        if module_names == "__ALL__":
             named_layers = [
                 NamedLayer(name, layer) for name, layer in model.named_modules()
             ]
@@ -233,98 +212,92 @@ class FishLeg(Optimizer):
 
         replaced_layers = []
         for named_layer in named_layers:
-            if True:
-                module = named_layer.layer
-                module_name = named_layer.layer_name
+            module = named_layer.layer
+            module_name = named_layer.layer_name
 
-                skip = False
-                for layer in replaced_layers:
-                    if re.match(layer.layer_name, module_name):
-                        inner_name = module_name[len(layer.layer_name) + 1 :]
-                        if any(
-                            re.match(inner_name, param_name)
-                            for param_name in layer.layer.order
-                        ):
-                            skip = True
-                if skip or any([name in module_name for name in skip_names]):
-                    continue
-                if isinstance(module, nn.Linear):
-                    replace = FishLinear(
-                        module.in_features,
-                        module.out_features,
-                        module.bias is not None,
-                        device=self.device,
-                    )
-                    replace = update_dict(replace, module)
-                    if self.initialization == "normal":
-                        init.normal_(replace.weight, 0, 1 / np.sqrt(module.in_features))
-                    elif self.initialization == "zero":  # fill with zeros for adapters
-                        module.weight.data.zero_()
-                        module.bias.data.zero_()
-                elif isinstance(module, nn.Embedding):
-                    replace = FishEmbedding(
-                        num_embeddings=module.num_embeddings,
-                        embedding_dim=module.embedding_dim,
-                        padding_idx=module.padding_idx,
-                        max_norm=module.max_norm,
-                        norm_type=module.norm_type,
-                        scale_grad_by_freq=module.scale_grad_by_freq,
-                        sparse=module.sparse,
-                        device=self.device,
-                    )
-                    replace = update_dict(replace, module)
-                elif isinstance(module, nn.Conv2d):
-                    replace = FishConv2d(
-                        in_channels=module.in_channels,
-                        out_channels=module.out_channels,
-                        kernel_size=module.kernel_size,
-                        stride=module.stride,
-                        padding=module.padding,
-                        dilation=module.dilation,
-                        groups=module.groups,
-                        bias=(module.bias is not None),
-                        padding_mode=module.padding_mode,
-                        device=self.device
-                        # TODO: deal with dtype and device?
-                    )
-                    replace = update_dict(replace, module)
-                elif isinstance(module, BertAttention):
-                    if config is None:
-                        config = model.config
-                    replace = FishBertAttention(config, device=self.device)
-                    replace = update_dict(replace, module)
-                elif isinstance(module, nn.BatchNorm2d):
-                    replace = FishBatchNorm2d(
-                        num_features=module.num_features,
-                        eps=module.eps,
-                        momentum=module.momentum,
-                        affine=module.affine,
-                        track_running_stats=module.track_running_stats,
-                        init_scale=self.fish_scale,
-                        device=self.device,
-                    )
-                    replace = update_dict(replace, module)
-                elif isinstance(module, nn.LayerNorm):
-                    replace = FishLayerNorm(
-                        normalized_shape=module.normalized_shape,
-                        eps=module.eps,
-                        elementwise_affine=module.elementwise_affine,
-                        init_scale=self.fish_scale,
-                        device=self.device,
-                    )
-                    replace = update_dict(replace, module)
-                else:
-                    continue
-                    # raise Warning(f'The FishLayer for module named {module_name} has not been implemented and hence skipped.')
-                recursive_setattr(model, module_name, replace)
-                replaced_layers.append(NamedLayer(module_name, replace))
-                if self.verbose:
-                    print("Replaced with FishLeg Layer: \t ", module_name)
-            # except:
-            #    raise TypeError(f'The given model has no module named {module_name}.')
+            for layer in replaced_layers:
+                if re.match(layer.layer_name, module_name):
+                    inner_name = module_name[len(layer.layer_name) + 1 :]
+                    if any(
+                        re.match(inner_name, param_name)
+                        for param_name in layer.layer.order
+                    ):
+                        continue
+
+            if isinstance(module, nn.Linear):
+                replace = FishLinear(
+                    module.in_features,
+                    module.out_features,
+                    module.bias is not None,
+                    device=self.device,
+                )
+
+                # if self.initialization == "normal":
+                #     init.normal_(replace.weight, 0, 1 / np.sqrt(module.in_features))
+                # elif self.initialization == "zero":  # fill with zeros for adapters
+                #     module.weight.data.zero_()
+                #     module.bias.data.zero_()
+            
+            elif isinstance(module, nn.Embedding):
+                replace = FishEmbedding(
+                    num_embeddings=module.num_embeddings,
+                    embedding_dim=module.embedding_dim,
+                    padding_idx=module.padding_idx,
+                    max_norm=module.max_norm,
+                    norm_type=module.norm_type,
+                    scale_grad_by_freq=module.scale_grad_by_freq,
+                    sparse=module.sparse,
+                    device=self.device,
+                )
+            
+            elif isinstance(module, nn.Conv2d):
+                replace = FishConv2d(
+                    in_channels=module.in_channels,
+                    out_channels=module.out_channels,
+                    kernel_size=module.kernel_size,
+                    stride=module.stride,
+                    padding=module.padding,
+                    dilation=module.dilation,
+                    groups=module.groups,
+                    bias=(module.bias is not None),
+                    padding_mode=module.padding_mode,
+                    device=self.device
+                    # TODO: deal with dtype and device?
+                )
+            
+            elif isinstance(module, BertAttention):
+                config = model.config
+                replace = FishBertAttention(config, device=self.device)
+            
+            elif isinstance(module, nn.BatchNorm2d):
+                replace = FishBatchNorm2d(
+                    num_features=module.num_features,
+                    eps=module.eps,
+                    momentum=module.momentum,
+                    affine=module.affine,
+                    track_running_stats=module.track_running_stats,
+                    init_scale=self.fish_scale,
+                    device=self.device,
+                )
+            
+            elif isinstance(module, nn.LayerNorm):
+                replace = FishLayerNorm(
+                    normalized_shape=module.normalized_shape,
+                    eps=module.eps,
+                    elementwise_affine=module.elementwise_affine,
+                    init_scale=self.fish_scale,
+                    device=self.device,
+                )
+            else:
+                continue
+                
+            replace = update_dict(replace, module)
+            recursive_setattr(model, module_name, replace)
+            replaced_layers.append(NamedLayer(module_name, replace))
+            if self.verbose:
+                print("Replaced with FishLeg Layer: \t ", module_name)
 
         # Define each modules
-        model.to(self.device)
         param_groups = []
         for named_layer in replaced_layers:
             module = named_layer.layer
@@ -339,7 +312,7 @@ class FishLeg(Optimizer):
                 "gradbar": [torch.zeros_like(params[name]) for name in module.order],
                 "grad": [torch.zeros_like(params[name]) for name in module.order],
                 "u": [torch.zeros_like(params[name]) for name in module.order],
-                "Qv": partial(module.Qv),
+                "Qv": module.Qv,
                 "order": module.order,
                 "name": named_layer.layer_name,
                 "module": module,
@@ -373,7 +346,9 @@ class FishLeg(Optimizer):
             [nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor
         ] = None,
     ) -> None:
-        """Warm up auxilirary parameters with approxiamte Adam,"""
+        """
+        Warm up auxilirary parameters with approxiamte Adam
+        """
         for _ in range(0, self.warmup_steps, dataloader.batch_size):
             data = self._prepare_input(next(iter(dataloader)))
             loss(self.model, data).backward()
@@ -400,133 +375,57 @@ class FishLeg(Optimizer):
         self,
         dataloader: torch.utils.data.DataLoader,
         loss: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
-        output_dir: str,
         iterations: int = 10000,
-        difference: bool = False,
-        verbose: bool = False,
-        testloader: torch.utils.data.DataLoader = None,
-        batch_size: int = 500,
-        fisher: bool = True,
     ) -> List:
-        aux_losses = []
         aux, checks = 0, 0
-        with open(
-            os.path.join(output_dir, "pretrain.csv"), "w", newline=""
-        ) as csv_file:
-            fieldnames = [
-                "batch_auxloss",
-                "batch_check",
-                "auxloss",
-                "check",
-                "linear",
-                "quad",
-                "reg",
-                "g2",
-            ]
-            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-            writer.writeheader()
 
-            for pre in range(iterations):
-                self.zero_grad()
-                batch = next(iter(dataloader))
-                batch = self._prepare_input(batch)
-                loss(self.model, batch).backward()
-                if self.grad_clip:
-                    nn.utils.clip_grad_norm_(
-                        self.parameters(),
-                        1,
-                    )
-                self._store_u(new=True)
+        for pre in range(iterations):
+            self.zero_grad()
 
-                if difference:
-                    self.zero_grad()
-                    batch = next(iter(dataloader))
-                    batch = self._prepare_input(batch)
-                    loss(self.model, batch).backward()
-                    self._store_u(alpha=-1.0)
+            batch = next(iter(dataloader))
+            batch = self._prepare_input(batch)
 
-                info = self.update_aux(fisher=fisher)
-                aux_loss = info[0].detach().cpu().numpy()
-                check = info[1].detach().cpu().numpy()
-                linear_term = info[2].detach().cpu().numpy()
-                aux_losses.append(aux_loss + 0.5 * linear_term)
+            loss(self.model, batch).backward()
 
-                if verbose:
-                    aux += aux_loss + 0.5 * linear_term
-                    checks += check
-                    if pre % batch_size == 0 and pre > 0:
-                        info = [e.detach().cpu().numpy() for e in info]
-                        checks = checks / batch_size
-                        aux = aux / batch_size
+            if self.grad_clip:
+                nn.utils.clip_grad_norm_(
+                    self.parameters(),
+                    1,
+                )
 
-                        if testloader is not None:
-                            test_checks = 0
-                            for _ in range(100):
-                                self.zero_grad()
-                                test_batch = next(iter(testloader))
-                                test_batch = self._prepare_input(test_batch)
-                                loss(self.model, test_batch).backward()
-                                self._store_u(new=True)
+            self._store_u(new=True)
 
-                                if difference:
-                                    self.zero_grad()
-                                    test_batch = next(iter(testloader))
-                                    test_batch = self._prepare_input(test_batch)
-                                    loss(self.model, test_batch).backward()
-                                    self._store_u(alpha=-1.0)
+            self.zero_grad()
 
-                                test_info = self.update_aux(fisher=fisher, train=False)
-                                test_checks += test_info[1].detach().cpu().numpy()
+            batch = next(iter(dataloader))
+            batch = self._prepare_input(batch)
 
-                            print(
-                                "iter:{:d}, \t train:{:.2f} \t test:{:.2f} \t auxloss:{:.2f} check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                    pre, checks, test_checks / 100, *info
-                                )
-                            )
-                        else:
-                            print(
-                                "iter:{:d}, auxlr:{:.5f} \t BATCH auxloss:{:.2f} check:{:.2f} \t auxloss:{:.2f} \tcheck:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                    pre,
-                                    self.aux_opt.param_groups[0]["lr"],
-                                    aux,
-                                    checks,
-                                    *info,
-                                )
-                            )
-                            row = {"batch_auxloss": aux, "batch_check": checks}
-                            for name, value in zip(
-                                ["auxloss", "check", "linear", "quad", "reg", "g2"],
-                                info,
-                            ):
-                                row[name] = value
-                            writer.writerow(row)
+            loss(self.model, batch).backward()
 
-                        aux = 0
-                        checks = 0
+            self._store_u(alpha=-1.0)
 
-        return aux_losses
+            info = self.update_aux()
 
+        return info
+
+    # This should be external
     def _store_u(
         self,
         transform: Callable = lambda x: x,
         alpha: float = 1.0,
         new: bool = False,
-        add_noise: bool = False,
     ):
         for group in self.param_groups:
             for i, p in enumerate(group["params"]):
-                if add_noise:
-                    scale = torch.sqrt(p.grad.data.var())
-                    group["grad"][i].copy_(torch.randn_like(p.data) * scale)
-                else:
-                    grad = transform(p.grad.data)
+                grad = transform(p.grad.data)
 
-                    if not new:
-                        group["grad"][i].add_(grad, alpha=alpha)
-                    else:
-                        group["grad"][i].copy_(grad)
+                if not new:
+                    group["grad"][i].add_(grad, alpha=alpha)
+                else:
+                    group["grad"][i].copy_(grad)
                 group["u"][i].copy_(grad)
 
+    # This should be external and done before passing into the optimizer
     def _prepare_input(
         self, data: Union[torch.Tensor, Any]
     ) -> Union[torch.Tensor, Any]:
@@ -542,8 +441,9 @@ class FishLeg(Optimizer):
             return data.to(**kwargs)
         return data
 
-    def update_aux(self, train=True, fisher=True) -> None:
-        """Performs a single auxliarary parameter update
+    def update_aux(self) -> None:
+        """
+        Performs a single auxliarary parameter update
         using Adam. By minimizing the following objective:
 
         .. math::
@@ -558,24 +458,25 @@ class FishLeg(Optimizer):
 
         self.aux_opt.zero_grad()
         with torch.no_grad():
-            if fisher:
-                samples = self.draw(self.model, data)
-            else:
-                samples = data
-        if True:
-            g2 = 0.0
-            for group in self.param_groups:
-                for grad in group["grad"]:
-                    g2 = g2 + torch.sum(grad * grad)
-            g_norm = torch.sqrt(g2)
+            data_x, data_y = data
+            samples_y = self.model(data_x)
+            samples = (data_x, self.likelihood.draw(samples_y))
+
+        g2 = 0.0
+        for group in self.param_groups:
+            for grad in group["grad"]:
+                g2 = g2 + torch.sum(grad * grad)
+        g_norm = torch.sqrt(g2)
 
         self.zero_grad()
-        self.nll(self.model, samples).backward()
+        self.likelihood.nll(samples_y, samples[1]).backward()
+        
         if self.grad_clip:
             nn.utils.clip_grad_norm_(
                 self.parameters(),
                 1,
             )
+
         reg_term = 0.0
         quad_term = 0.0
         linear_term = 0.0
@@ -583,9 +484,10 @@ class FishLeg(Optimizer):
 
         for i, group in enumerate(self.param_groups):
             qg = group["Qv"](group["grad"])
-            # group["v"] = qg
+
             for p, g, d_p in zip(group["params"], group["grad"], qg):
                 grad = p.grad.data
+            
                 quad_term = quad_term + torch.sum(grad * d_p)
                 linear_term = linear_term + torch.sum(g * d_p)
                 reg_term = reg_term + self.damping * torch.sum(d_p * d_p)
@@ -600,12 +502,9 @@ class FishLeg(Optimizer):
             aux_loss = aux_loss / g2
             check = check / g2
 
-        if train:
-            aux_loss.backward()
-            self.aux_loss = aux_loss.item()
-            self.aux_opt.step()
-            # if self.aux_scheduler is not None:
-            #     self.aux_scheduler.step()
+        aux_loss.backward()
+        self.aux_loss = aux_loss.item()
+        self.aux_opt.step()
 
         if train:
             aux_loss.backward()
