@@ -64,4 +64,17 @@ optimizer =  opt = FishLeg(
 
 ...
 ```
+In case of pruning/fine-tuning, where a pretrained model is given, one would wish to pretrain the auxiliary parameters by calling the function `pretrain_fish()`
+
+```python
+aux_losses = optimizer.pretrain_fish(
+        dataloader,
+        nll,
+        output_dir,
+        iterations = 2000,
+        batch_size = 16,
+        difference = True,
+        fisher = True
+    )
+```
 
