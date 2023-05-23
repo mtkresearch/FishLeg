@@ -19,7 +19,7 @@
 
 ## Installation
 FishLeg is written in Python, and only requires PyTorch > 1.8.<br />
-The example scripts have additional requirements defined in [src/optim/requirements.txt](src/optim/requirements.txt)<br />
+The example scripts have additional requirements defined in [src/requirements.txt](src/requirements.txt)<br />
 The FishLeg library does not requires dedicated installation. <br />
 
 ## Usage
