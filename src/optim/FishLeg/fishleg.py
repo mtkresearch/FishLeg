@@ -164,10 +164,12 @@ class FishLeg(Optimizer):
         """
         # TODO: Add checking for this function!
         # TODO: The below loop can be refactored.
-        for _ in range(0, self.warmup_steps, self.aux_dataloader.batch_size):
-            data = self._prepare_input(next(iter(self.aux_dataloader)))
-            output = self.model(data[0])
-            self.likelihood(output, data[1]).backward()
+        for n, (data_x, data_y) in enumerate(self.aux_dataloader):
+            data_x, data_y = data_x.to(self.device), data_y.to(self.device)
+            output = self.model(data_x)
+            self.likelihood(output, data_y).backward()
+            if n == self.warmup_steps:
+                break
 
         group = self.param_groups[0]
         fish_scale = group["fish_scale"]
@@ -178,11 +180,10 @@ class FishLeg(Optimizer):
             if not isinstance(module, nn.Sequential) and hasattr(module, "warmup"):
                 for name, param in module.named_parameters():
                     if "fishleg_aux" not in name:
-                        g_avg = param.grad / int(
-                            self.warmup_steps / self.aux_dataloader.batch_size
-                        )
+                        g_avg = param.grad / self.warmup_steps
                         warm_facs.append(fish_scale / (torch.square(g_avg) + damping))
                 module.warmup(warm_facs, init_scale=fish_scale)
+                print(module.fishleg_aux["A"])
             else:
                 continue
 
