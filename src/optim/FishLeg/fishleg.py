@@ -109,19 +109,19 @@ class FishLeg(Optimizer):
         aux_dataloader: torch.utils.data.DataLoader,
         likelihood: FishLikelihood = None,  # Is this optional??
         lr: float = 5e-2,
-        damping: float = 5e-1,
-        weight_decay: float = 1e-5,
         beta: float = 0.9,
-        update_aux_every: int = 10,
+        weight_decay: float = 1e-5,
         aux_lr: float = 1e-4,
         aux_betas: Tuple[float, float] = (0.9, 0.999),
         aux_eps: float = 1e-8,
+        fish_scale: float = 1.0,
+        damping: float = 5e-1,
+        update_aux_every: int = 10,
+        warmup_steps: int = 0,
         normalize_aux: bool = False,
         module_names: str = "__ALL__",  # This should be __ALL__ or something similar
         initialization: str = "uniform",
-        fish_scale: float = 1.0,
         grad_clip: bool = False,
-        warmup_steps: int = 0,
         device: str = "cpu",
         verbose: bool = False,
     ) -> None:
@@ -150,7 +150,7 @@ class FishLeg(Optimizer):
         self.verbose = verbose
 
         self.model, param_groups = self.init_model_aux(
-            model, module_names=module_names, config=config
+            model, module_names=module_names
         )
         defaults = dict(aux_lr=aux_lr, lr=lr)
         super(FishLeg, self).__init__(param_groups, defaults)
@@ -457,10 +457,10 @@ class FishLeg(Optimizer):
         data = self._prepare_input(data)
 
         self.aux_opt.zero_grad()
-        with torch.no_grad():
-            data_x, data_y = data
-            pred_y = self.model(data_x)
-            samples_y = self.likelihood.draw(pred_y)
+
+        data_x, data_y = data
+        pred_y = self.model(data_x)
+        samples_y = self.likelihood.draw(pred_y)
 
         g2 = 0.0
         for group in self.param_groups:
@@ -530,15 +530,15 @@ class FishLeg(Optimizer):
                 # once for difference of gradients
                 self._store_u(alpha=-1.0)
                 info = self.update_aux()
-                info = [e.detach().cpu().numpy() for e in info]
+                # info = [e.detach().cpu().numpy() for e in info]
 
-                if self.verbose == True:
-                    if self.step_t % 200 == 1:
-                        print(
-                            "iter:{:d}, lr:{:.2f} \tauxloss:{:.2f} \tcheck:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                self.step_t, self.fish_lr, *info
-                            )
-                        )
+                # if self.verbose == True:
+                #     if self.step_t % 200 == 1:
+                #         print(
+                #             "iter:{:d}, lr:{:.2f} \tauxloss:{:.2f} \tcheck:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                #                 self.step_t, self.fish_lr, *info
+                #             )
+                #         )
 
                 self.updated = True
 
@@ -571,7 +571,7 @@ class FishLeg(Optimizer):
                 for p, d_p, gbar in zip(group["params"], nat_grad, group["gradbar"]):
                     gbar.copy_(self.beta * gbar + (1.0 - self.beta) * d_p)
                     delta = gbar.add(p, alpha=self.weight_decay)
-                    p.add_(delta, alpha=-self.fish_lr)
+                    p.add_(delta, alpha=-self.lr)
 
     @torch.no_grad()
     def _save_input(
