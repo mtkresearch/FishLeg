@@ -16,7 +16,9 @@ torch.set_default_dtype(torch.float32)
 
 sys.path.append("../src")
 
-from optim.FishLeg import FishLeg, FISH_LIKELIHOODS
+from optim.FishLeg import FishLeg, FISH_LIKELIHOODS, initialise_FishModel
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 seed = 13
 torch.manual_seed(seed)
@@ -41,9 +43,7 @@ aux_loader = torch.utils.data.DataLoader(
     train_dataset, shuffle=True, batch_size=batch_size
 )
 
-test_loader = torch.utils.data.DataLoader(
-    test_dataset, batch_size=1000, shuffle=False
-)
+test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1000, shuffle=False)
 
 model = nn.Sequential(
     nn.Linear(784, 1000, dtype=torch.float32),
@@ -60,7 +60,11 @@ model = nn.Sequential(
     nn.Linear(500, 1000, dtype=torch.float32),
     nn.ReLU(),
     nn.Linear(1000, 784, dtype=torch.float32),
-).to(device)
+)
+
+model = initialise_FishModel(model, module_names="__ALL__")
+
+model = model.to(device)
 
 likelihood = FISH_LIKELIHOODS["bernoulli"](device=device)
 
@@ -79,22 +83,24 @@ update_aux_every = 10
 initialization = "normal"
 normalization = True
 
+
 opt = FishLeg(
-        model,
-        aux_loader,
-        likelihood,
-        lr=lr,
-        beta=beta,
-        weight_decay=weight_decay,
-        aux_lr=aux_lr,
-        aux_betas=(0.9, 0.999),
-        aux_eps=aux_eps,
-        fish_scale=scale,
-        damping=damping,
-        update_aux_every=update_aux_every,
-        initialization=initialization,
-        device=device,
-    )
+    model,
+    aux_loader,
+    likelihood,
+    lr=lr,
+    beta=beta,
+    weight_decay=weight_decay,
+    aux_lr=aux_lr,
+    aux_betas=(0.9, 0.999),
+    aux_eps=aux_eps,
+    fish_scale=scale,
+    damping=damping,
+    warmup_steps=2,
+    update_aux_every=update_aux_every,
+    initialization=initialization,
+    device=device,
+)
 
 writer = SummaryWriter()
 
@@ -138,5 +144,3 @@ for epoch in range(1, epochs + 1):
 
         writer.add_scalar("Loss/train", running_loss / n, epoch)
         writer.add_scalar("Loss/test", running_test_loss * 50 / n, epoch)
-
-

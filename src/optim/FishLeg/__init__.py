@@ -1,6 +1,7 @@
 from .fishleg import FishLeg
-from .fishleg_layers import *
+from .layers import *
 from .fishleg_likelihood import *
+from .utils import *
 
 FISH_LAYERS = {"linear": FishLinear}
 FISH_LIKELIHOODS = {
