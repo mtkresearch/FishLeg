@@ -46,7 +46,6 @@ class FishLeg(Optimizer):
                 gradients are small (default: False)
     :param List module_names: A List of module names wished to be optimized/pruned by FishLeg.
                 (default: [], meaning all modules optimized/pruned by FishLeg)
-    :param string initialization: Initialization of weights (default: uniform)
     :param int warmup_steps: If warmup_steps is zero, the default SGD warmup will be used, where Q is
                 initialized as a scaled identity matrix. If warmup is positive, the diagonal
                 of Q will be initialized as :math:`\frac{1}{g^2 + \gamma}`; and in this case,
@@ -89,7 +88,7 @@ class FishLeg(Optimizer):
         self,
         model: nn.Module,
         aux_dataloader: torch.utils.data.DataLoader,
-        likelihood: FishLikelihood = None,  # Is this optional??
+        likelihood: FishLikelihood,
         lr: float = 5e-2,
         beta: float = 0.9,
         weight_decay: float = 1e-5,
@@ -100,7 +99,6 @@ class FishLeg(Optimizer):
         damping: float = 5e-1,
         update_aux_every: int = 10,
         warmup_steps: int = 0,
-        initialization: str = "uniform",
         device: str = "cpu",
         verbose: bool = False,
     ) -> None:
@@ -109,17 +107,9 @@ class FishLeg(Optimizer):
         self.aux_dataloader = aux_dataloader
         self.likelihood = likelihood
 
-        # TODO: The below can be added into the dict defaults I think?
-        self.update_aux_every = update_aux_every
-
-        self.warmup_steps = warmup_steps
-
-        self.initialization = initialization
-
         self.device = device
         self.verbose = verbose
 
-        # TODO: Add more in here?
         defaults = dict(
             lr=lr,
             beta=beta,
@@ -127,6 +117,8 @@ class FishLeg(Optimizer):
             aux_lr=aux_lr,
             fish_scale=fish_scale,
             damping=damping,
+            update_aux_every=update_aux_every,
+            warmup_steps=warmup_steps,
         )
         params = [
             param
@@ -150,8 +142,8 @@ class FishLeg(Optimizer):
             weight_decay=0,  # weight_decay need to be fixed to zero
         )
 
-        if self.warmup_steps > 0:
-            self.warmup_aux()
+        if warmup_steps > 0:
+            self.warmup_aux(num_steps=warmup_steps)
 
     def __setstate__(self, state):
         super().__setstate__(state)
@@ -171,7 +163,7 @@ class FishLeg(Optimizer):
             for s in state_values:
                 s["step"] = torch.tensor(float(s["step"]))
 
-    def warmup_aux(self) -> None:
+    def warmup_aux(self, num_steps: int) -> None:
         """
         Warm up auxilirary parameters with approxiamte Adam
         """
@@ -192,7 +184,7 @@ class FishLeg(Optimizer):
                 else:
                     continue
 
-            if n == self.warmup_steps:
+            if n == num_steps:
                 break
 
         group = self.param_groups[0]
@@ -204,7 +196,7 @@ class FishLeg(Optimizer):
             if not isinstance(module, nn.Sequential) and hasattr(
                 module, "finalise_warmup"
             ):
-                module.finalise_warmup(damping, self.warmup_steps)
+                module.finalise_warmup(damping, num_steps)
             else:
                 continue
 
@@ -230,6 +222,7 @@ class FishLeg(Optimizer):
 
         # TODO: Get current gradients of model and muliply by -1
         # TODO: Do second backward step to add second set of gradients to the model
+        # TODO: Change this to using torch.autograd.grad?
 
         data_x, data_y = next(iter(dataloader))
         data_x, data_y = data_x.to(self.device), data_y.to(self.device)
@@ -242,7 +235,6 @@ class FishLeg(Optimizer):
 
         return aux_loss
 
-    # TODO: ALL of this.
     def update_aux(self) -> None:
         """
         Performs a single auxliarary parameter update
@@ -254,62 +246,70 @@ class FishLeg(Optimizer):
         where :math:`\\theta` is the parameters of model, :math:`\lambda` is the
         auxliarary parameters.
         """
-        self.store_g = False
-        data = next(iter(self.aux_dataloader))
-        data = self._prepare_input(data)
+        self.aux_opt.zero_grad()
+
+        data_x, data_y = next(iter(self.aux_dataloader))
+        data_x, data_y = data_x.to(self.device), data_y.to(self.device)
 
         group = self.param_groups[0]
         damping = group["damping"]
 
-        self.aux_opt.zero_grad()
-
-        data_x, data_y = data
         pred_y = self.model(data_x)
-        samples_y = self.likelihood.draw(pred_y)
 
-        g2 = 0.0
-        for group in self.param_groups:
-            for grad in group["grad"]:
-                g2 = g2 + torch.sum(grad * grad)
-        g_norm = torch.sqrt(g2)
+        with torch.no_grad():
+            samples_y = self.likelihood.draw(pred_y)
 
-        self.zero_grad()
-        self.likelihood.nll(pred_y, samples_y).backward()
+        loss = self.likelihood.nll(pred_y, samples_y)
+
+        # TODO: I think using autograd.grad avoids accumulating gradients like backward does?
+        grads = torch.autograd.grad(
+            outputs=loss,
+            inputs=self.param_groups[0]["params"],
+            # create_graph=True,  # TODO: Check this!
+            allow_unused=True,
+        )
 
         reg_term = 0.0
         quad_term = 0.0
         linear_term = 0.0
-        align = 0.0
 
-        for i, group in enumerate(self.param_groups):
-            qg = group["Qv"](group["grad"])
+        p_idx = 0
+        for module in self.model.modules():
+            if not isinstance(module, nn.Sequential) and hasattr(module, "Qv"):
+                layer_grads = []
+                for name, param in module.named_parameters():
+                    if "fishleg_aux" not in name:
+                        layer_grads.append(param.grad.data)
 
-            for p, g, d_p in zip(group["params"], group["grad"], qg):
-                grad = p.grad.data
+                nat_grads = module.Qv(layer_grads)
 
-                quad_term = quad_term + torch.sum(grad * d_p)
-                linear_term = linear_term + torch.sum(g * d_p)
-                reg_term = reg_term + damping * torch.sum(d_p * d_p)
-                align = align + torch.sum(grad * g)
+                for n, (name, param) in enumerate(module.named_parameters()):
+                    if "fishleg_aux" not in name:
+                        nat_grad = nat_grads[n]
+                        sample_grad = grads[p_idx]
+                        true_grad = layer_grads[n]
+                        p_idx += 1
 
-        check = quad_term * align + self.damping * linear_term - g2
+                        quad_term += torch.sum(sample_grad * nat_grad)
+                        linear_term += torch.sum(true_grad * nat_grad)
+                        reg_term += damping * torch.sum(nat_grad * nat_grad)
+
         quad_term = quad_term**2
 
         aux_loss = 0.5 * (reg_term + quad_term) - linear_term
 
-        aux_loss.backward()
-        self.aux_loss = aux_loss.item()
+        aux_grads = torch.autograd.grad(
+            outputs=aux_loss,
+            inputs=self.aux_opt.param_groups[0]["params"],
+            # create_graph=True,  # TODO: Check this!
+            allow_unused=True,
+        )
+        for n, a_p in enumerate(self.aux_opt.param_groups[0]["params"]):
+            a_p.grad = aux_grads[n]
+
         self.aux_opt.step()
 
-        if train:
-            aux_loss.backward()
-            self.aux_loss = aux_loss.item()
-            self.aux_opt.step()
-            if self.aux_scheduler is not None:
-                self.aux_scheduler.step()
-
-        self.store_g = True
-        return aux_loss, check, linear_term, quad_term, reg_term, g2
+        return aux_loss.item()
 
     # TODO: What do we need here?
     def _init_group(
@@ -365,25 +365,11 @@ class FishLeg(Optimizer):
                 #     )
                 state_steps.append(state["step"])
 
-    # TODO: Add in the aux update.
     def step(self) -> None:
         """
         Performes a single optimization step of FishLeg.
         """
-
-        # if self.step_t % self.update_aux_every == 0:
-        #     self._store_u(new=True)
-
-        # if self.step_t % self.update_aux_every == 1:
-        #     # once for difference of gradients
-        #     self._store_u(alpha=-1.0)
-        #     info = self.update_aux()
-
-        # if self.step_t % self.update_aux_every == 2:
-        #     # once for gradient
-        #     self._store_u(new=True)
-        #     self.update_aux()
-
+        # TODO: Adam loops over groups - Not sure what this does?
         group = self.param_groups[0]
 
         # TODO: get rid of anything we don't need
@@ -395,6 +381,7 @@ class FishLeg(Optimizer):
         state_steps = []
         beta = group["beta"]
         weight_decay = group["weight_decay"]
+        update_aux_every = group["update_aux_every"]
         step_size = group["lr"]  # TODO: Add scheduling in here.
 
         self._init_group(
@@ -406,6 +393,11 @@ class FishLeg(Optimizer):
             # max_exp_avg_sqs,
             state_steps,
         )
+
+        step_t = state_steps[0]
+
+        if step_t % update_aux_every == 0 and step_t != 0:
+            self.update_aux()
 
         # TODO: Could do with a better way of indexing here maybe?
         with torch.no_grad():
