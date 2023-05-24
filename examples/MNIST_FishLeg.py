@@ -74,15 +74,16 @@ lr = 0.02
 beta = 0.9
 weight_decay = 1e-5
 
-aux_lr = 2e-3
+aux_lr = 1e-4
 aux_eps = 1e-8
 scale = 1
-damping = 0.3
-update_aux_every = 10
+damping = 0.5
+update_aux_every = 5
 
 initialization = "normal"
 normalization = True
 
+writer = SummaryWriter()
 
 opt = FishLeg(
     model,
@@ -96,20 +97,17 @@ opt = FishLeg(
     aux_eps=aux_eps,
     fish_scale=scale,
     damping=damping,
-    warmup_steps=2,
+    warmup_steps=1000,
     update_aux_every=update_aux_every,
-    initialization=initialization,
     device=device,
+    writer=writer,
 )
-
-writer = SummaryWriter()
 
 epochs = 10
 
 for epoch in range(1, epochs + 1):
     with tqdm(train_loader, unit="batch") as tepoch:
         running_loss = 0
-        running_test_loss = 0
         for n, (batch_data, batch_labels) in enumerate(tepoch, start=1):
             tepoch.set_description(f"Epoch {epoch}")
 
@@ -128,19 +126,24 @@ for epoch in range(1, epochs + 1):
             if n % 50 == 0:
                 model.eval()
 
-                test_batch_data, test_batch_labels = next(iter(test_loader))
-                test_batch_data, test_batch_labels = test_batch_data.to(
-                    device
-                ), test_batch_labels.to(device)
+                running_test_loss = 0
 
-                test_output = model(test_batch_data)
+                for m, (test_batch_data, test_batch_labels) in enumerate(test_loader):
+                    test_batch_data, test_batch_labels = test_batch_data.to(
+                        device
+                    ), test_batch_labels.to(device)
 
-                test_loss = likelihood(test_output, test_batch_labels)
+                    test_output = model(test_batch_data)
 
-                running_test_loss += test_loss.item()
+                    test_loss = likelihood(test_output, test_batch_labels)
 
-                tepoch.set_postfix(loss=loss.item(), test_loss=test_loss.item())
+                    running_test_loss += test_loss.item()
+
+                running_test_loss /= m
+
+                tepoch.set_postfix(loss=loss.item(), test_loss=running_test_loss)
                 model.train()
 
+        tepoch.set_postfix(loss=running_loss / n, test_loss=running_test_loss)
         writer.add_scalar("Loss/train", running_loss / n, epoch)
-        writer.add_scalar("Loss/test", running_test_loss * 50 / n, epoch)
+        writer.add_scalar("Loss/test", running_test_loss, epoch)

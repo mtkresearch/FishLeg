@@ -101,6 +101,7 @@ class FishLeg(Optimizer):
         warmup_steps: int = 0,
         device: str = "cpu",
         verbose: bool = False,
+        writer: torch.utils.tensorboard.SummaryWriter or bool = False,
     ) -> None:
         self.model = model
 
@@ -108,7 +109,7 @@ class FishLeg(Optimizer):
         self.likelihood = likelihood
 
         self.device = device
-        self.verbose = verbose
+        self.writer = writer
 
         defaults = dict(
             lr=lr,
@@ -297,6 +298,13 @@ class FishLeg(Optimizer):
         quad_term = quad_term**2
 
         aux_loss = 0.5 * (reg_term + quad_term) - linear_term
+
+        if self.writer:
+            self.writer.add_scalar(
+                "AuxLoss/train",
+                aux_loss,
+                self.state[self.param_groups[0]["params"][-1]]["step"],
+            )
 
         aux_grads = torch.autograd.grad(
             outputs=aux_loss,
