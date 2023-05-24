@@ -43,35 +43,21 @@ class FishLinear(nn.Linear, FishModule):
         self.order = ["weight", "bias"]
         self.device = device
 
-    def warmup(
-        self,
-        v: Tuple[Tensor, Tensor] = None,
-        batch_speedup: bool = False,
-        init_scale: float = 1.0,
-    ) -> None:
-        out_features, in_features = self.weight.shape
-        if v is None:
-            if batch_speedup:
-                self.fishleg_aux["R"].data.mul_(np.sqrt(init_scale))
-                self.fishleg_aux["L"].data.mul_(np.sqrt(init_scale))
-            else:
-                self.fishleg_aux["A"].data.mul_(np.sqrt(init_scale))
-        else:
-            A = torch.cat([v[0], v[1][:, None]], dim=-1)
-            if batch_speedup:
-                # nearest Kronecker product, using SVD
-                # TODO: Check the below! This was D instead of A!
-                U, S, Vh = torch.linalg.svd(A, full_matrices=False)
-                self.fishleg_aux["R"].data.copy_(
-                    torch.sqrt(torch.diag(torch.sqrt(S[0]) * U[:, 0]))
-                )
-                self.fishleg_aux["L"].data.copy_(
-                    torch.sqrt(torch.diag(torch.sqrt(S[0]) * Vh[0, :]))
-                )
-            else:
-                self.fishleg_aux["A"].data.copy_(A)
+        self.warmup_state = torch.ones_like(self.fishleg_aux["A"]).to(device)
 
-    def Qv(self, v: Tuple[Tensor, Tensor], full: bool = False) -> Tuple[Tensor, Tensor]:
+    def add_warmup_grad(
+        self,
+        grad: Tuple[Tensor, Tensor],
+    ) -> None:
+        # Add this into an overload of to() function?
+        self.warmup_state = self.warmup_state.to(grad[0].device)
+
+        self.warmup_state += torch.cat([grad[0], grad[1][:, None]], dim=-1)
+
+    def finalise_warmup(self, damping: float, num_steps: int) -> None:
+        self.fishleg_aux["A"].data.div_(self.warmup_state.div_(num_steps).add_(damping))
+
+    def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         """For fully-connected layers, the default structure of :math:`Q` as a
         block-diaglonal matrix is,
         .. math::
