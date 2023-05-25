@@ -20,6 +20,7 @@ class FishConv2d(nn.Conv2d, FishModule):
         groups: int = 1,
         bias: bool = True,
         padding_mode: str = "zeros",
+        init_scale: int = 1.0,
         device=None,
     ) -> None:
         super(FishConv2d, self).__init__(

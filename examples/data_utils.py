@@ -52,7 +52,7 @@ def maybe_download(SOURCE_URL, filename, work_directory):
 
 
 class ImageDataSet(Dataset):
-    def __init__(self, images, labels, if_autoencoder, input_reshape):
+    def __init__(self, images, labels, if_autoencoder, input_reshape, if_faces):
         self._num_examples = len(images)
         if len(images) > 0:
             if input_reshape:
@@ -62,6 +62,9 @@ class ImageDataSet(Dataset):
                     images.shape[0], images.shape[1] * images.shape[2] * images.shape[3]
                 )
             images = images.astype(np.float32)
+            if if_faces:
+                images = np.swapaxes(images, 1, 2)
+                images = images.reshape(images.shape[0], images.shape[1], 25, 25)
             if if_autoencoder:
                 labels = images
         self._images = images
@@ -193,6 +196,7 @@ def read_data_sets(name_dataset, home_path, if_autoencoder=True, reshape=True):
         pass
 
     data_sets = DataSets()
+    if_faces = False
 
     VALIDATION_SIZE = 0
     train_dir = os.path.join(home_path, "data", name_dataset + "_data")
@@ -226,6 +230,7 @@ def read_data_sets(name_dataset, home_path, if_autoencoder=True, reshape=True):
         test_images = np.multiply(test_images, 1.0 / 255.0)
     elif name_dataset == "FACES":
         if_autoencoder = if_autoencoder
+        if_faces = True
 
         SOURCE_URL = "http://www.cs.toronto.edu/~jmartens/"
         TRAIN_IMAGES = "newfaces_rot_single.mat"
@@ -264,13 +269,13 @@ def read_data_sets(name_dataset, home_path, if_autoencoder=True, reshape=True):
     input_reshape = reshape
 
     data_sets.train = ImageDataSet(
-        train_images, train_labels, if_autoencoder, input_reshape
+        train_images, train_labels, if_autoencoder, input_reshape, if_faces
     )
     data_sets.validation = ImageDataSet(
-        validation_images, validation_labels, if_autoencoder, input_reshape
+        validation_images, validation_labels, if_autoencoder, input_reshape, if_faces
     )
     data_sets.test = ImageDataSet(
-        test_images, test_labels, if_autoencoder, input_reshape
+        test_images, test_labels, if_autoencoder, input_reshape, if_faces
     )
 
     print(f"Succesfully loaded {name_dataset} dataset.")

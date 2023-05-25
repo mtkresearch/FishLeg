@@ -18,7 +18,7 @@ torch.set_default_dtype(torch.float32)
 
 sys.path.append("../src")
 
-from optim.FishLeg import FISH_LIKELIHOODS
+from optim.FishLeg import FishLeg, FISH_LIKELIHOODS, initialise_FishModel
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
@@ -70,6 +70,21 @@ model = nn.Sequential(
     nn.Linear(16 * 14 * 14, 10),
 )
 
+lr = 0.005
+beta = 0.3
+weight_decay = 1e-5
+
+aux_lr = 1e-4
+aux_eps = 1e-8
+scale = 1
+damping = 0.5
+update_aux_every = 10
+
+initialization = "normal"
+normalization = True
+
+model = initialise_FishModel(model, module_names="__ALL__", fish_scale=scale)
+
 model = model.to(device)
 
 likelihood = FISH_LIKELIHOODS["softmax"](device=device)
@@ -80,15 +95,24 @@ weight_decay = 1e-5
 # eps = 1e-8
 
 writer = SummaryWriter(
-    log_dir=f"runs/MNIST_adam_CNN/lr={lr}_lambda={weight_decay}/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+    log_dir=f"runs/MNIST_fishleg_CNN/lr={lr}_lambda={weight_decay}/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
 )
 
-opt = optim.Adam(
-    model.parameters(),
+opt = FishLeg(
+    model,
+    aux_loader,
+    likelihood,
     lr=lr,
-    # betas=betas,
+    beta=beta,
     weight_decay=weight_decay,
-    # eps=eps,
+    aux_lr=aux_lr,
+    aux_betas=(0.9, 0.999),
+    aux_eps=aux_eps,
+    damping=damping,
+    warmup_steps=1000,
+    update_aux_every=update_aux_every,
+    device=device,
+    writer=writer,
 )
 
 epochs = 100
