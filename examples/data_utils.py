@@ -16,8 +16,9 @@ __all__ = [
     "ImageDataSet",
     "extract_images",
     "extract_labels",
-    "read_data_sets"
+    "read_data_sets",
 ]
+
 
 def dense_to_one_hot(y, max_value=9, min_value=0):
     """
@@ -54,7 +55,7 @@ class ImageDataSet(Dataset):
     def __init__(self, images, labels, if_autoencoder, input_reshape):
         self._num_examples = len(images)
         if len(images) > 0:
-            if input_reshape == "fully-connected":
+            if input_reshape:
                 images = np.swapaxes(images, 2, 3)
                 images = np.swapaxes(images, 1, 2)
                 images = images.reshape(
@@ -152,7 +153,7 @@ def extract_images(filename):
         cols = _read32(bytestream)
         buf = bytestream.read(rows * cols * num_images)
         data = np.frombuffer(buf, dtype=np.uint8)
-        data = data.reshape(num_images, rows, cols, 1)
+        data = data.reshape(num_images, 1, rows, cols)
         return data
 
 
@@ -172,7 +173,8 @@ def extract_labels(filename, one_hot=False):
             return dense_to_one_hot(labels)
         return
 
-def read_data_sets(name_dataset, home_path, if_autoencoder=True):
+
+def read_data_sets(name_dataset, home_path, if_autoencoder=True, reshape=True):
     """
     A helper utitlity that returns ImageDataset.
     If the data are not present in the home_path they are
@@ -259,7 +261,7 @@ def read_data_sets(name_dataset, home_path, if_autoencoder=True):
     train_images = train_images[VALIDATION_SIZE:]
     train_labels = train_labels[VALIDATION_SIZE:]
 
-    input_reshape = "fully-connected"
+    input_reshape = reshape
 
     data_sets.train = ImageDataSet(
         train_images, train_labels, if_autoencoder, input_reshape
