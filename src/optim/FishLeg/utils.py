@@ -129,6 +129,7 @@ def get_named_layers_by_regex(
 def initialise_FishModel(
     model: nn.Module,
     module_names: str,
+    fish_scale: int = 1.0,
     verbose: bool = False,
 ) -> Union[nn.Module, List]:
     """Given a model to optimize, parameters can be devided to
@@ -177,6 +178,7 @@ def initialise_FishModel(
                 module.in_features,
                 module.out_features,
                 module.bias is not None,
+                init_scale=fish_scale,
                 device=next(module.parameters()).device,
             )
 
@@ -195,6 +197,7 @@ def initialise_FishModel(
                 norm_type=module.norm_type,
                 scale_grad_by_freq=module.scale_grad_by_freq,
                 sparse=module.sparse,
+                init_scale=fish_scale,
                 device=next(module.parameters()).device,
             )
 
@@ -209,6 +212,7 @@ def initialise_FishModel(
                 groups=module.groups,
                 bias=(module.bias is not None),
                 padding_mode=module.padding_mode,
+                init_scale=fish_scale,
                 device=next(module.parameters()).device
                 # TODO: deal with dtype and device?
             )
@@ -224,6 +228,7 @@ def initialise_FishModel(
                 momentum=module.momentum,
                 affine=module.affine,
                 track_running_stats=module.track_running_stats,
+                init_scale=fish_scale,
                 device=next(module.parameters()).device,
             )
 
@@ -232,6 +237,7 @@ def initialise_FishModel(
                 normalized_shape=module.normalized_shape,
                 eps=module.eps,
                 elementwise_affine=module.elementwise_affine,
+                init_scale=fish_scale,
                 device=next(module.parameters()).device,
             )
         else:

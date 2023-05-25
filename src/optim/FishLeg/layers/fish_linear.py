@@ -19,8 +19,9 @@ class FishLinear(nn.Linear, FishModule):
         in_features: int,
         out_features: int,
         bias: bool = True,
-        device=None,
-        dtype=None,
+        init_scale: int = 1.0,
+        device: str or None = None,
+        dtype: str or None = None,
     ) -> None:
         super(FishLinear, self).__init__(
             in_features, out_features, bias, device=device, dtype=dtype
@@ -31,7 +32,9 @@ class FishLinear(nn.Linear, FishModule):
             {
                 "L": Parameter(torch.eye(in_features + 1)),
                 "R": Parameter(torch.eye(out_features)),
-                "A": Parameter(torch.ones(out_features, in_features + 1)),
+                "A": Parameter(
+                    torch.ones(out_features, in_features + 1).mul_(np.sqrt(init_scale))
+                ),
             }
         )
         mask_L = torch.tril(torch.ones_like(self.fishleg_aux["L"])).to(device)

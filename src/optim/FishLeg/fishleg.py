@@ -6,7 +6,7 @@ from torch.optim import Optimizer, Adam
 import sys
 
 from .layers import *
-from .fishleg_likelihood import FishLikelihood
+from .likelihoods import FishLikelihoodBase
 
 __all__ = [
     "FishLeg",
@@ -50,9 +50,6 @@ class FishLeg(Optimizer):
                 initialized as a scaled identity matrix. If warmup is positive, the diagonal
                 of Q will be initialized as :math:`\frac{1}{g^2 + \gamma}`; and in this case,
                 warmup_data and warmup_loss should be provided for sampling of gradients.
-    :param float fish_scale: Help specify initial scale of the inverse Fisher Information matrix
-                approximation. If using SGD warmup we suggest, :math:`\eta=\gamma^{-1}`. If
-                warmup is positive, scale should be 1. (default: 1)
     :param str device: The device where calculations will be performed using PyTorch Tensors.
 
     Example:
@@ -88,14 +85,13 @@ class FishLeg(Optimizer):
         self,
         model: nn.Module,
         aux_dataloader: torch.utils.data.DataLoader,
-        likelihood: FishLikelihood,
+        likelihood: FishLikelihoodBase,
         lr: float = 5e-2,
         beta: float = 0.9,
         weight_decay: float = 1e-5,
         aux_lr: float = 1e-4,
         aux_betas: Tuple[float, float] = (0.9, 0.999),
         aux_eps: float = 1e-8,
-        fish_scale: float = 1.0,
         damping: float = 5e-1,
         update_aux_every: int = 10,
         warmup_steps: int = 0,
@@ -116,7 +112,6 @@ class FishLeg(Optimizer):
             beta=beta,
             weight_decay=weight_decay,
             aux_lr=aux_lr,
-            fish_scale=fish_scale,
             damping=damping,
             update_aux_every=update_aux_every,
             warmup_steps=warmup_steps,
@@ -319,7 +314,7 @@ class FishLeg(Optimizer):
 
         return aux_loss.item()
 
-    # TODO: What do we need here?
+    # TODO: What do we need here? - This method is taken from Adam, to discuss!
     def _init_group(
         self,
         group,
@@ -433,7 +428,7 @@ class FishLeg(Optimizer):
 
                             param.add_(exp_avg, alpha=-step_size)
 
-                # This is for updating non-FishLeg layers - do we want this?
+                # This is for updating non-FishLeg layers - do we want this/needs checking.
                 elif not isinstance(module, nn.Sequential) and not isinstance(
                     module, nn.ParameterDict
                 ):

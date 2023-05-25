@@ -8,6 +8,8 @@ import os
 import sys
 import matplotlib.pyplot as plt
 import torch.optim as optim
+from datetime import datetime
+
 from torch.utils.tensorboard import SummaryWriter
 
 from data_utils import read_data_sets
@@ -62,28 +64,30 @@ model = nn.Sequential(
     nn.Linear(1000, 784, dtype=torch.float32),
 )
 
-model = initialise_FishModel(model, module_names="__ALL__")
-
-model = model.to(device)
-
-likelihood = FISH_LIKELIHOODS["bernoulli"](device=device)
-
 eta_adam = 1e-4
 
-lr = 0.02
-beta = 0.9
+lr = 0.005
+beta = 0.3
 weight_decay = 1e-5
 
 aux_lr = 1e-4
 aux_eps = 1e-8
 scale = 1
 damping = 0.5
-update_aux_every = 5
+update_aux_every = 10
 
 initialization = "normal"
 normalization = True
 
-writer = SummaryWriter()
+model = initialise_FishModel(model, module_names="__ALL__", fish_scale=scale)
+
+model = model.to(device)
+
+likelihood = FISH_LIKELIHOODS["bernoulli"](device=device)
+
+writer = SummaryWriter(
+    log_dir=f"runs/MNIST_fishleg/lr={lr}_lambda={weight_decay}/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+)
 
 opt = FishLeg(
     model,
@@ -95,7 +99,6 @@ opt = FishLeg(
     aux_lr=aux_lr,
     aux_betas=(0.9, 0.999),
     aux_eps=aux_eps,
-    fish_scale=scale,
     damping=damping,
     warmup_steps=1000,
     update_aux_every=update_aux_every,
@@ -103,7 +106,10 @@ opt = FishLeg(
     writer=writer,
 )
 
-epochs = 10
+epochs = 100
+
+st = time.time()
+eval_time = 0
 
 for epoch in range(1, epochs + 1):
     with tqdm(train_loader, unit="batch") as tepoch:
@@ -123,6 +129,7 @@ for epoch in range(1, epochs + 1):
             loss.backward()
             opt.step()
 
+            et = time.time()
             if n % 50 == 0:
                 model.eval()
 
@@ -143,7 +150,17 @@ for epoch in range(1, epochs + 1):
 
                 tepoch.set_postfix(loss=loss.item(), test_loss=running_test_loss)
                 model.train()
+                eval_time += time.time() - et
 
-        tepoch.set_postfix(loss=running_loss / n, test_loss=running_test_loss)
+        epoch_time = time.time() - st - eval_time
+
+        tepoch.set_postfix(
+            loss=running_loss / n, test_loss=running_test_loss, epoch_time=epoch_time
+        )
+        # Write out the losses per epoch
         writer.add_scalar("Loss/train", running_loss / n, epoch)
         writer.add_scalar("Loss/test", running_test_loss, epoch)
+
+        # Write out the losses per wall clock time
+        writer.add_scalar("Loss/train/time", running_loss / n, epoch_time)
+        writer.add_scalar("Loss/test/time", running_test_loss, epoch_time)
