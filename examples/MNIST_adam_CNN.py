@@ -74,7 +74,7 @@ model = model.to(device)
 
 likelihood = FISH_LIKELIHOODS["softmax"](device=device)
 
-lr = 0.01
+lr = 0.0005
 # betas = (0.7, 0.9)
 weight_decay = 1e-5
 # eps = 1e-8

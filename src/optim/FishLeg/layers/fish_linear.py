@@ -87,39 +87,6 @@ class FishLinear(nn.Linear, FishModule):
         u = A * u
         return (u[:, :-1], u[:, -1])
 
-    def Qg(self) -> Tuple[Tensor, Tensor]:
-        """Speed up Qg product, when batch size is smaller than parameter size.
-        By chain rule:
-
-        .. math::
-                    DW_i = g_i\hat{a}^T_{i-1}
-        where :math:`DW_i` is gradient of parameter of the ith layer, :math:`g_i` is
-        gradient w.r.t output of ith layer and :math:`\hat{a}_i` is input to ith layer,
-        and output of (i-1)th layer.
-        """
-
-        L = self.fishleg_aux["L"]
-        R = self.fishleg_aux["R"]
-        lft = torch.linalg.multi_dot((R.T, R, self._g))
-        rgt = torch.linalg.multi_dot((self._a, L, L.T))
-        z = lft @ rgt
-        return (z[:, :-1], z[:, -1])
-
-    def save_layer_input(self, input_: List[Tensor]) -> None:
-        a = input_[0].to(self.device).clone()
-        a = a.view(-1, a.size(-1))
-        if self.bias is not None:
-            a = torch.cat([a, a.new_ones((*a.shape[:-1], 1))], dim=-1)
-        self._a = a
-
-    def save_layer_grad_output(
-        self,
-        grad_output: Tuple[Tensor, ...],
-    ) -> None:
-        g = grad_output[0].to(self.device)
-        g = g.view(-1, g.size(-1))
-        self._g = g.T
-
     def diagQ(self) -> Tuple:
         """The Q matrix defines the inverse fisher approximation as below:
 

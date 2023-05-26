@@ -70,13 +70,13 @@ model = nn.Sequential(
     nn.Linear(16 * 14 * 14, 10),
 )
 
-lr = 0.005
-beta = 0.3
+lr = 0.02
+beta = 0.9
 weight_decay = 1e-5
 
 aux_lr = 1e-4
 aux_eps = 1e-8
-scale = 1
+scale = 2
 damping = 0.5
 update_aux_every = 10
 
@@ -88,11 +88,6 @@ model = initialise_FishModel(model, module_names="__ALL__", fish_scale=scale)
 model = model.to(device)
 
 likelihood = FISH_LIKELIHOODS["softmax"](device=device)
-
-lr = 0.01
-# betas = (0.7, 0.9)
-weight_decay = 1e-5
-# eps = 1e-8
 
 writer = SummaryWriter(
     log_dir=f"runs/MNIST_fishleg_CNN/lr={lr}_lambda={weight_decay}/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
@@ -109,7 +104,7 @@ opt = FishLeg(
     aux_betas=(0.9, 0.999),
     aux_eps=aux_eps,
     damping=damping,
-    warmup_steps=1000,
+    warmup_steps=5000,
     update_aux_every=update_aux_every,
     device=device,
     writer=writer,

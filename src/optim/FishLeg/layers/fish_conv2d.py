@@ -42,40 +42,36 @@ class FishConv2d(nn.Conv2d, FishModule):
             {
                 "L": Parameter(
                     torch.eye(
-                        int(bias) + self.in_channels_eff * self.k_size, device=device
+                        int(bias) + int(self.in_channels_eff * self.k_size),
+                        device=device,
                     )
                 ),
                 "R": Parameter(torch.eye(out_channels, device=device)),
                 "A": Parameter(
                     torch.ones(
                         out_channels,
-                        int(bias) + self.in_channels_eff * self.k_size,
+                        int(bias) + int(self.in_channels_eff * self.k_size),
                         device=device,
-                    )
+                    ).mul_(np.sqrt(init_scale))
                 ),
             }
         )
         self.order = ["weight", "bias"] if bias else ["weight"]
         self._bias = bias
 
-    def warmup(
-        self,
-        v: Tuple[Tensor, Tensor] = None,
-        init_scale: float = 1.0,
-    ) -> None:
-        if v is None:
-            self.fishleg_aux["A"].data.mul_(np.sqrt(init_scale))
-        else:
-            if self._bias:
-                w, b = v
-                w = torch.reshape(w, (self.out_channels, -1))
-                b = torch.reshape(b, (self.out_channels, 1))
-                A = torch.cat([w, b], dim=-1)
-            else:
-                (w,) = v
-                A = torch.reshape(w, (self.out_channels, -1))
+        self.warmup_state = torch.ones_like(self.fishleg_aux["A"]).to(device)
 
-            self.fishleg_aux["A"].data.copy_(A)
+    def add_warmup_grad(self, grad: Tuple[Tensor, Tensor]) -> None:
+        # Add this into an overload of to() function?
+        self.warmup_state = self.warmup_state.to(grad[0].device)
+
+        w_grad = grad[0].reshape(self.out_channels, -1)
+        b_grad = grad[1].reshape(self.out_channels, 1)
+
+        self.warmup_state += torch.cat([w_grad, b_grad], dim=-1)
+
+    def finalise_warmup(self, damping: float, num_steps: int) -> None:
+        self.fishleg_aux["A"].data.div_(self.warmup_state.div_(num_steps).add_(damping))
 
     def Qv(
         self, v: Tuple[Tensor, Optional[Tensor]], full: bool = False
