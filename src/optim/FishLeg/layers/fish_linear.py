@@ -6,7 +6,7 @@ from torch.nn import ParameterDict, Parameter
 
 from .fish_base import FishModule
 from .utils import get_zero_grad_hook  # TODO: Is this in torch? Let's upgrade?
-from typing import Any, List, Dict, Tuple, Callable, Optional
+from typing import Tuple
 
 __all__ = [
     "FishLinear",
@@ -61,7 +61,10 @@ class FishLinear(nn.Linear, FishModule):
         self.fishleg_aux["A"].data.div_(self.warmup_state.div_(num_steps).add_(damping))
 
     def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
-        """For fully-connected layers, the default structure of :math:`Q` as a
+        """
+        TODO: Check this...
+
+        For fully-connected layers, the default structure of :math:`Q` as a
         block-diaglonal matrix is,
         .. math::
                     Q_l = (R_lR_l^T \otimes L_lL_l^T)
@@ -88,7 +91,10 @@ class FishLinear(nn.Linear, FishModule):
         return (u[:, :-1], u[:, -1])
 
     def diagQ(self) -> Tuple:
-        """The Q matrix defines the inverse fisher approximation as below:
+        """
+        TODO: Check this...
+
+        The Q matrix defines the inverse fisher approximation as below:
 
         .. math::
                     Q_l = (R_lR_l^T \otimes L_lL_l^T)

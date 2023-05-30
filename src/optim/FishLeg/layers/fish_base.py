@@ -8,7 +8,8 @@ from abc import abstractmethod
 
 
 class FishModule(nn.Module):
-    """Base class for all neural network modules in FishLeg to
+    """
+    Base class for all neural network modules in FishLeg to
 
     #. Initialize auxiliary parameters, :math:`\lambda` and its forms, :math:`Q(\lambda)`.
     #. Specify quick calculation of :math:`Q(\lambda)v` products.
@@ -38,18 +39,8 @@ class FishModule(nn.Module):
         for p in self.fishleg_aux.values():
             p.to(device)
 
-    def warmup(
-        self,
-        v: Tuple[Tensor, Tensor] = None,
-        batch_speedup: bool = False,
-        init_scale: float = 1.0,
-    ):
-        pass
-
     @abstractmethod
-    def Qv(
-        self, aux: Dict, v: Tuple[Tensor, ...], full: bool = False
-    ) -> Tuple[Tensor, ...]:
+    def Qv(self, v: Tuple[Tensor, ...]) -> Tuple[Tensor, ...]:
         """:math:`Q(\lambda)` is a positive definite matrix which will effectively
         estimate the inverse damped Fisher Information Matrix. Appropriate choices
         for :math:`Q` should take into account the architecture of the model/module.
@@ -58,14 +49,9 @@ class FishModule(nn.Module):
         the neural networks.
 
         Args:
-            aux: (Dict, required): auxiliary parameters,
-                    :math:`\lambda`, a dictionary with keys, the name
-                    of the auxiliary parameters, and values, the auxiliary parameters
-                    of the module. These auxiliaray parameters will form :math:`Q(\lambda)`.
             v: (Tuple[Tensor, ...], required): Values of the original parameters,
                     in an order that align with `self.order`, to multiply with
                     :math:`Q(\lambda)`.
-            full: (bool, optional), whether to use full inner and outer re-scaling
         Returns:
             Tuple[Tensor, ...]: The calculated :math:`Q(\lambda)v` products,
                     in same order with `self.order`.

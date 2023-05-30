@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import numpy as np
 from torch.nn import ParameterDict, Parameter
 
 from .fish_base import FishModule

@@ -76,7 +76,9 @@ class FishConv2d(nn.Conv2d, FishModule):
     def Qv(
         self, v: Tuple[Tensor, Optional[Tensor]], full: bool = False
     ) -> Tuple[Tensor, Optional[Tensor]]:
-        """Inspired by KFAC's conv2D layer by Grosse and Martens: Kronecker product of sizes (out_channels ⊗  (in_channels_eff * k_size))"""
+        """
+        Inspired by KFAC's conv2D layer by Grosse and Martens: Kronecker product of sizes (out_channels ⊗  (in_channels_eff * k_size))
+        """
 
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
@@ -105,7 +107,10 @@ class FishConv2d(nn.Conv2d, FishModule):
             return (torch.reshape(u, sw),)
 
     def diagQ(self) -> Tensor:
-        """Similar maths as the Linear layer"""
+        """
+        TODO: Needs to be rewritten here for documentation purposes.
+        Similar maths as the Linear layer
+        """
 
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]

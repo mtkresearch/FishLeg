@@ -49,11 +49,11 @@ class FishEmbedding(nn.Embedding, FishModule):
         ]
         self.device = device
 
+    # TODO: Change to add_warmup_grad and finalise_warmup
     def warmup(
         self,
         v: Tuple[Tensor,] = None,
         init_scale: float = 1.0,
-        batch_speedup: bool = False,
     ) -> None:
         if v is None:
             self.fishleg_aux["A"].data.mul_(np.sqrt(init_scale))
