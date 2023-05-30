@@ -19,3 +19,8 @@ This folder contains a collection of examples of how to use FishLeg for a number
 ## Contributing
 
 If you have a self-contained example of using FishLeg, please get in touch! We'd love to collect as many examples as possible here!
+
+
+# TODO
+- Complete README with results from examples
+- Add scripts as jupyter notebooks/in their own folders.
