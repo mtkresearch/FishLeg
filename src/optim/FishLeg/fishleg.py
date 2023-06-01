@@ -10,6 +10,7 @@ import regex as re
 from functools import partial
 import csv
 import os
+import copy
 from transformers.models.bert.modeling_bert import BertAttention
 
 from .utils import recursive_setattr, recursive_getattr, update_dict, get_named_layers_by_regex, NamedLayer
@@ -127,6 +128,7 @@ class FishLeg(Optimizer):
         aux_dataloader: torch.utils.data.DataLoader,
         likelihood: FishLikelihood = None,
         lr: float = 5e-2,
+        eps: float = 1e-4,
         damping: float = 5e-1,
         weight_decay: float = 1e-5,
         beta: float = 0.9,
@@ -150,7 +152,8 @@ class FishLeg(Optimizer):
         warmup_loss: Callable = None,
         device: str = "cpu",
         config = None,
-        verbose = False
+        verbose = False,
+        output_dir = None
     ) -> None:
         self.model = model
         self.lr = lr
@@ -163,17 +166,21 @@ class FishLeg(Optimizer):
         self.likelihood = likelihood
         self.warmup = warmup
         self.scale = scale
+        self.eps = eps
         self.sample_gm = sample_gm
         self.clip = clip
         self.aux_lr = aux_lr
         self.fish_lr = lr
         self.damping = damping
         self.verbose = verbose
+        self.output_dir = output_dir
 
         self.draw = draw
         self.nll = nll
         self.aux_dataloader = aux_dataloader
-
+        
+        self.plus, self.minus = copy.deepcopy(model), copy.deepcopy(model)
+        
         self.model, param_groups = self.init_model_aux(
                             model, 
                             module_names=module_names,
@@ -213,11 +220,18 @@ class FishLeg(Optimizer):
         else:
             self.aux_scheduler = None
 
+        self.scheduler = None
+
         self.update_aux_every = update_aux_every
         self.weight_decay = weight_decay
         self.beta = beta
         self.step_t = 0
         self.store_g = True
+        
+        self.aux_loss, self.check, self.check2 = [],[],[]
+        aux_file = os.path.join(self.output_dir, "aux_evolve.csv")
+        if os.path.exists(aux_file):
+            os.remove(aux_file)
 
     def init_model_aux(
         self,
@@ -364,8 +378,9 @@ class FishLeg(Optimizer):
                     "gradbar": [
                         torch.zeros_like(params[name]) for name in module.order
                     ],
-                    "grad": [torch.zeros_like(params[name]) for name in module.order],
                     "u": [torch.zeros_like(params[name]) for name in module.order],
+                    "grad": [torch.zeros_like(params[name]) for name in module.order],
+                    "ggu": [torch.zeros_like(params[name]) for name in module.order],
                     "Qv": module.Qg
                     if self.batch_speedup
                     else partial(module.Qv, full=self.full),
@@ -429,7 +444,7 @@ class FishLeg(Optimizer):
                 ds = []
                 for i, g2 in enumerate(group["grad"]):
                     g2_avg = g2 / int(self.warmup / dataloader.batch_size)
-                    ds.append(scale / torch.sqrt(torch.sqrt(g2_avg + self.damping)))
+                    ds.append(1. / torch.sqrt(g2_avg + self.damping))
 
                 group["module"].warmup(
                     ds, batch_speedup=self.batch_speedup, init_scale=scale
@@ -439,106 +454,128 @@ class FishLeg(Optimizer):
                     batch_speedup=self.batch_speedup, init_scale=scale
                 )
     
-    def parameters(self,):
-        for group in self.param_groups:
-            for param in group["params"]:
-                yield param
+    #def parameters(self,):
+    #    for group in self.param_groups:
+    #        for param in group["params"]:
+    #            yield param
+    
+    def update_fisher(
+        self,
+        num_samples: int = 256
+    ):
+        aux, check, check2 = 0, 0, 0
+        for t in range(num_samples):
+            data = next(iter(self.aux_dataloader))
+            data = self._prepare_input(data)
+            self.zero_grad()
+            self.nll(self.model, data).backward()
+            self._store_u(new=True)
 
+            data = next(iter(self.aux_dataloader))
+            data = self._prepare_input(data)
+            self.zero_grad()
+            self.nll(self.model, data).backward()
+            self._store_u(alpha=-1.0)
+
+            info = self.update_aux()
+            info = [e.detach().cpu().numpy() for e in info]
+            
+            aux += info[0]
+            check += info[1]
+            check2 += info[2]
+            if t % 32 == 0:
+                if t > 0: 
+                    aux /= 32
+                    check /= 32
+                    check2 /= 32
+                print(
+                        "iter:{:d}, \taux:{:.2f} check:{:.2f} check2:{:.2f} \tauxloss:{:.2f} \tcheck:{:.2f} \tcheck2:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                                    t, aux, check, check2, *info
+                                ))
+                if t > 0: aux = 0
+        
     def pretrain_fish(
         self,
         dataloader: torch.utils.data.DataLoader,
         loss: Callable[[nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor],
-        output_dir: str,
         iterations: int = 10000,
+        initial: int = 1000,
         difference: bool = False,
         verbose: bool = False,
         testloader: torch.utils.data.DataLoader = None,
         batch_size: int = 500,
         fisher: bool = True,
+        noise: bool = False,
     ) -> List:
 
+        aux, checks, checks2 = 0, 0, 0
         
-        aux_losses = []
-        aux, checks = 0, 0
-        with open(
-            os.path.join(output_dir, "pretrain.csv"), "w", newline=""
-        ) as csv_file:
-            fieldnames = ['batch_auxloss', 'batch_check', 'auxloss', 'check', 'linear', 'quad', 'reg', 'g2']
-            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-            writer.writeheader()
+        aux_file = os.path.join(self.output_dir, "pretrain.csv")
+        if os.path.exists(aux_file):
+            os.remove(aux_file)
+
+        with open(aux_file, "a", newline="") as csv_file:
+            writer = csv.writer(csv_file)
+            names = ["iter", "lr", "auxloss", "check", "check2", "linear", "quad", "reg", "g2"]
+            for group in self.param_groups:
+                names.append(group["name"])
+            writer.writerow(names)
+
             
-            for pre in range(iterations):
+        for pre in range(iterations):
+            self.zero_grad()
+            batch = next(iter(dataloader))
+            batch = self._prepare_input(batch)
+            loss(self.model, batch).backward()
+            self._store_u(new=True, add_noise=noise)
+
+            if difference:
                 self.zero_grad()
                 batch = next(iter(dataloader))
                 batch = self._prepare_input(batch)
                 loss(self.model, batch).backward()
-                if self.clip:
-                    nn.utils.clip_grad_norm_(
-                                self.parameters(),
-                                1,
+                self._store_u(alpha=-1.0)
+
+            info = self.update_aux(fisher=fisher)
+            aux_loss = info[0].detach().cpu().numpy()
+            check = info[1].detach().cpu().numpy()
+            check2 = info[2].detach().cpu().numpy()
+            checks_layers = info[-1]
+            infos = [e.detach().cpu().numpy() for e in info[:-1]]    
+            
+            with open(aux_file, "a", newline="") as csv_file:
+                writer = csv.writer(csv_file)
+                row = [pre,  self.aux_opt.param_groups[0]['lr'], *infos]
+                for name in names[len(infos)+2:]:
+                    row.append(checks_layers[name])
+                writer.writerow(row)
+
+            if pre % (batch_size * 10) == 0:
+                save_path = os.path.join(self.output_dir, "fl_model_checkpoint_" + str(pre) + ".pth")
+                with open(save_path, mode="wb") as file_:
+                    torch.save(
+                                {
+                                    "model_state_dict": self.model.state_dict(),
+                                }, file_
                             )
-                self._store_u(new=True)
+            if verbose:
+                aux += aux_loss
+                checks += check
+                checks2 += check2
+                if pre % batch_size == 0 and pre > 0:
+                    checks = checks / batch_size
+                    checks2 = checks2 / batch_size
+                    aux = aux / batch_size
 
-                if difference:
-                    self.zero_grad()
-                    batch = next(iter(dataloader))
-                    batch = self._prepare_input(batch)
-                    loss(self.model, batch).backward()
-                    self._store_u(alpha=-1.0)
-
-                info = self.update_aux(fisher=fisher)
-                aux_loss = info[0].detach().cpu().numpy()
-                check = info[1].detach().cpu().numpy()
-                linear_term = info[2].detach().cpu().numpy()
-                aux_losses.append(aux_loss + 0.5 * linear_term)
-
-                if verbose:
-                    aux += aux_loss + 0.5 * linear_term
-                    checks += check
-                    if pre % batch_size == 0 and pre > 0:
-                        info = [e.detach().cpu().numpy() for e in info]
-                        checks = checks / batch_size
-                        aux = aux / batch_size
-
-                        if testloader is not None:
-                            test_checks = 0
-                            for _ in range(100):
-                                self.zero_grad()
-                                test_batch = next(iter(testloader))
-                                test_batch = self._prepare_input(test_batch)
-                                loss(self.model, test_batch).backward()
-                                self._store_u(new=True)
-
-                                if difference:
-                                    self.zero_grad()
-                                    test_batch = next(iter(testloader))
-                                    test_batch = self._prepare_input(test_batch)
-                                    loss(self.model, test_batch).backward()
-                                    self._store_u(alpha=-1.0)
-
-                                test_info = self.update_aux(fisher=fisher, train=False)
-                                test_checks += test_info[1].detach().cpu().numpy()
-
-                            print(
-                                "iter:{:d}, \t train:{:.2f} \t test:{:.2f} \t auxloss:{:.2f} check:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                    pre, checks, test_checks / 100, *info
+                    print(
+                        "iter:{:d},auxlr:{:.5f} \tBATCH auxloss:{:.2f} \tcheck:{:.2f} \tcheck2:{:.2f} \tauxloss:{:.2f} \tcheck:{:.2f} \tcheck2:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                                    pre, self.aux_opt.param_groups[0]['lr'], aux, checks, checks2, *info
                                 )
                             )
-                        else:
-                            print(
-                                    "iter:{:d}, auxlr:{:.5f} \t BATCH auxloss:{:.2f} check:{:.2f} \t auxloss:{:.2f} \tcheck:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                    pre, self.aux_opt.param_groups[0]['lr'], aux, checks, *info
-                                )
-                            )
-                            row = {'batch_auxloss': aux, 'batch_check': checks}
-                            for name, value in zip(['auxloss', 'check', 'linear', 'quad', 'reg', 'g2'], info):
-                                row[name]=value
-                            writer.writerow(row)
+                            
+                    aux, checks, checks2 = 0, 0, 0
 
-                        aux = 0
-                        checks = 0
-
-        return aux_losses
+        return
 
     def _store_u(
         self,
@@ -547,11 +584,20 @@ class FishLeg(Optimizer):
         new: bool = False,
         add_noise: bool = False,
     ):
+        '''
+        if add_noise:
+            g2 = 0.0
+            for group in self.param_groups:
+                for p in group["params"]:
+                    mask = ~(p.data == 0)
+                    g2 += torch.sum(torch.square(p.grad.data))
+        '''
         for group in self.param_groups:
             for i, p in enumerate(group["params"]):
                 if add_noise:
-                    scale = torch.sqrt(p.grad.data.var())
-                    group["grad"][i].copy_(torch.randn_like(p.data) * scale)
+                    mask = ~(p.data == 0)
+                    scale = torch.sqrt(p.grad.data[mask].var()) # * (1./(torch.abs(p.data) + 1.))
+                    group["grad"][i].copy_(torch.randn_like(p.data) * scale * mask)
                 else:
                     grad = transform(p.grad.data)
                     
@@ -559,7 +605,7 @@ class FishLeg(Optimizer):
                         group["grad"][i].add_(grad, alpha=alpha)
                     else:
                         group["grad"][i].copy_(grad)
-                group["u"][i].copy_(grad)
+                    group["u"][i].copy_(grad)
     
     def _prepare_input(
         self, data: Union[torch.Tensor, Any]
@@ -576,7 +622,7 @@ class FishLeg(Optimizer):
             return data.to(**kwargs)
         return data
 
-    def update_aux(self, train=True, fisher=True) -> None:
+    def update_aux(self, train=True, fisher=True, data=None) -> None:
         """Performs a single auxliarary parameter update
         using Adam. By minimizing the following objective:
 
@@ -596,105 +642,156 @@ class FishLeg(Optimizer):
                 samples = self.draw(self.model, data)
             else:
                 samples = data
-        if True:
-            g2 = 0.0
-            for group in self.param_groups:
-                for grad in group["grad"]:
-                    g2 = g2 + torch.sum(grad * grad)
-            g_norm = torch.sqrt(g2)
-
+         
+        u2 = 0.0
+        for group in self.param_groups:
+            for grad in group["grad"]:
+                u2 = u2 + torch.sum(grad * grad)
+        u_norm = torch.sqrt(u2)
+        
         self.zero_grad()
-        self.nll(self.model, samples).backward()
-        if self.clip:
-            nn.utils.clip_grad_norm_(
-                                self.parameters(),
-                                1,
-                            )
+        loss = self.nll(self.model, samples)
+        #loss.backward()
+
         reg_term = 0.0
-        quad_term = 0.0
+        quad = 0.0
         linear_term = 0.0
         align = 0.0
 
         for i, group in enumerate(self.param_groups):
-            qg = group["Qv"]() if self.batch_speedup else group["Qv"](group["grad"])
-            # group["v"] = qg
-            for p, g, d_p in zip(
-                group["params"], group["grad"], qg
+            if self.normalization:
+                u_normalized = [u/u_norm for u in group["grad"]]
+            else:
+                u_normalized = group["grad"]
+            qu = group["Qv"]() if self.batch_speedup else group["Qv"](u_normalized)
+            name = group["name"]
+            group['v'] = qu
+            for p, para_name, u, dqu in zip(
+                group["params"], group["order"], u_normalized, qu
             ):
-                grad = p.grad.data
-                quad_term = quad_term + torch.sum(grad * d_p)
-                linear_term = linear_term + torch.sum(g * d_p)
-                reg_term = reg_term + self.damping * torch.sum(d_p * d_p)
-                align = align + torch.sum(grad * g)
-        '''                
-        for k in range(self.sample_gm):
-            with torch.no_grad():
-                data = next(iter(self.aux_dataloader))
-                data = self._prepare_input(data)
-                samples = self.draw(self.model, data)
-            self.zero_grad()
-            self.nll(self.model, samples).backward()
-            if self.clip:
-                nn.utils.clip_grad_norm_(
-                                self.parameters(),
-                                1,
-                            )
-            quad, lign = 0.0, 0.0
-            for i, group in enumerate(self.param_groups):
-                for p,g,d_p in zip(group["params"],group["grad"],group["v"]):
-                    grad = p.grad.data
-                    quad = quad + torch.sum(grad * d_p)
-                    lign = lign + torch.sum(grad * g)
-            quad_term += quad ** 2
-            align += lign * quad
-        quad_term /= self.sample_gm
-        align /= self.sample_gm
+                #grad = p.grad.data
+                #quad = quad + torch.sum(grad * dqu)
+                mask = ~(u == 0)
+                linear_term = linear_term + torch.sum(u * dqu)
+                reg_term = reg_term + self.damping * torch.sum(dqu * dqu * mask)
+                #align = align + torch.sum(grad * u)
+
+                plus_param = recursive_getattr(self.plus, '.'.join([name, *para_name.split('.')[:-1]]))
+                minus_param = recursive_getattr(self.minus, '.'.join([name, *para_name.split('.')[:-1]]))
+
+                plus_param._parameters[para_name.split('.')[-1]] = (p.data + dqu * self.eps) * mask
+                minus_param._parameters[para_name.split('.')[-1]]= (p.data - dqu * self.eps) * mask
+        
+        h_plus = self.nll(self.plus, samples)
+        h_minus = self.nll(self.minus, samples)
+        
+        #check = align * quad + self.damping * linear_term - 1
+         
+        quad_term = (h_plus + h_minus) / (self.eps**2)
+        aux_loss = quad_term + reg_term - 2 * linear_term
+        
         '''
-
-        check = align * quad_term + self.damping * linear_term - g2
-        quad_term = quad_term**2
-
-        aux_loss = 0.5 * (reg_term + quad_term) - linear_term
-
         if self.normalization:
-            aux_loss = aux_loss / g2
-            check = check / g2
+            aux_loss = aux_loss / u2
+            check = check / u2
+        '''
 
         if train:
             aux_loss.backward()
-            self.aux_loss = aux_loss.item()
             self.aux_opt.step()
             if self.aux_scheduler is not None:
                 self.aux_scheduler.step()
+        
+        checks_layer = {}
+        check, check3, norms1, norms2 = 0,0,0,0
+        batch_size = samples["input_ids"].shape[0]
+        for k in range(batch_size):
+            self.zero_grad()
+            sample = {name: v[[k]] for name,v in samples.items()}
+            self.nll(self.model, sample).backward()
+            with torch.no_grad():
+                gu, uqg = 0, 0
+                for group in self.param_groups:
+                    for p, u, dqu in zip(
+                        group["params"], group["grad"], group["v"]   
+                    ):
+                        if self.normalization: u = u / u_norm
+                        grad = p.grad.data
+                        gu += torch.sum(grad * u)
+                        uqg += torch.sum(grad * dqu)
 
+                check += uqg * gu
+                for i, group in enumerate(self.param_groups):
+                    qg = group["Qv"]([p.grad.data for p in group["params"]])
+                
+                    for ggu, dqg in zip(
+                        group['ggu'], qg
+                    ):
+                        if k==0:
+                            ggu.copy_(dqg * gu)
+                        else:
+                            ggu.add_(dqg * gu)
+
+        with torch.no_grad():
+            check = check / batch_size + self.damping * linear_term - 1
+        
+            for group in self.param_groups:
+                sim, norm1, norm2 = 0,0,0
+                for u, dqu, qggu in zip(
+                    group["grad"], group["v"], group["ggu"]
+                ):
+                    if self.normalization: u = u / u_norm
+                    qfu = qggu / batch_size + self.damping * dqu
+                    norm1 += torch.sum(qfu * qfu)
+                    norm2 += torch.sum(u * u)
+                    sim += torch.sum(qfu * u)
+                checks_layer[group["name"]] = (sim/torch.sqrt(norm1*norm2)).detach().cpu().numpy()
+                check3 += sim
+                norms1 += norm1
+                norms2 += norm2
+        
+            check3 = check3 / torch.sqrt(norms1 * norms2)
+            #check2 = (h_plus + h_minus - 2*loss)/(self.eps**2) + reg_term - linear_term
+        
         self.store_g = True
-        return aux_loss, check, linear_term, quad_term, reg_term, g2
+        return aux_loss, check, check3, linear_term, quad_term, reg_term, u2, checks_layer
 
-    def step(self, closure=None) -> None:
+    def step(self, closure=None, data=None) -> None:
         """Performes a single optimization step of FishLeg."""
         self.updated = False
 
         if self.update_aux_every > 0:
             if self.step_t % self.update_aux_every == 0:
-                self._store_u(new=True)
+                #self._store_u(new=True)
+                pass
             if self.step_t % self.update_aux_every == 1:
                 # once for difference of gradients
-                self._store_u(alpha=-1.)
+                self._store_u(add_noise=True)
                 info = self.update_aux()
                 info = [e.detach().cpu().numpy() for e in info]
+                        
+                self.aux_loss.append(info[0])
+                self.check.append(info[1])
+                self.check2.append(info[2])
 
                 if self.verbose==True:
-                    if self.step_t % 200 == 1:
+
+                    if self.step_t % int(self.update_aux_every*10) == 1:
+                        batch_aux = sum(self.aux_loss[-10:])/min(len(self.aux_loss), 10)
+                        batch_check = sum(self.check[-10:])/min(len(self.check), 10)
+                        batch_check2 = sum(self.check2[-10:])/min(len(self.check2), 10)
                         print(
-                                "iter:{:d}, lr:{:.2f} \tauxloss:{:.2f} \tcheck:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
-                                    self.step_t,  self.fish_lr, *info
+                                "iter:{:d},lr:{:.6f},auxlr:{:.6f}\t BATCH aux:{:.2f}, check:{:.2f} check2:{:.2f} \tauxloss:{:.2f} check:{:.2f} check2:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
+                                    self.step_t,  self.param_groups[0]['lr'], self.aux_opt.param_groups[0]["lr"], batch_aux, batch_check, batch_check2, *info
                                 )
                             )
-                self.updated = True
-            if self.step_t % self.update_aux_every == 2:
-                # once for gradient
-                self._store_u(new=True)
-                self.update_aux()
+                        with open(
+                            os.path.join(self.output_dir, "aux_evolve.csv"), "a", newline=""
+                        ) as csv_file:
+                            writer = csv.writer(csv_file)
+                            writer.writerow([
+                                    self.step_t, self.aux_opt.param_groups[0]["lr"], batch_aux, batch_check, batch_check2, *info
+                                ])
                 self.updated = True
         elif self.update_aux_every < 0:
             self._store_u(new=True)
@@ -728,9 +825,12 @@ class FishLeg(Optimizer):
                     for p, d_p, gbar in zip(
                         group["params"], nat_grad, group["gradbar"]
                     ):
-                        gbar.copy_(self.beta * gbar + (1.0 - self.beta) * d_p)
-                        delta = gbar.add(p, alpha=self.weight_decay)
-                        p.add_(delta, alpha=-self.fish_lr)
+                        mask = ~(p.data == 0)
+                        gbar.copy_((self.beta * gbar + (1.0 - self.beta) * d_p) * mask)
+                        delta = gbar.add(p * mask, alpha=self.weight_decay)
+                        p.add_(delta, alpha=-group['lr'])
+        if self.scheduler is not None:
+            self.scheduler.step()
 
     @torch.no_grad()
     def _save_input(

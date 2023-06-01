@@ -48,10 +48,10 @@ class FishBertAttention(BertAttention, FishModule):
                 "O": Parameter(
                         torch.eye(self.hidden_size),
                     ),
-                "Sk": Parameter(torch.ones(self.hidden_size +1, self.hidden_size)),
-                "Sq": Parameter(torch.ones(self.hidden_size, self.hidden_size +1)),
-                "Sv": Parameter(torch.ones(self.hidden_size, self.hidden_size +1)),
-                "So": Parameter(torch.ones(self.hidden_size, self.hidden_size +1))
+                "scalek": Parameter(torch.ones(self.hidden_size +1, self.hidden_size)),
+                "scaleq": Parameter(torch.ones(self.hidden_size, self.hidden_size +1)),
+                "scalev": Parameter(torch.ones(self.hidden_size, self.hidden_size +1)),
+                "scaleo": Parameter(torch.ones(self.hidden_size, self.hidden_size +1))
             }
         )
 
@@ -70,29 +70,29 @@ class FishBertAttention(BertAttention, FishModule):
         init_scale: float = 1.0,
     ) -> None:
         if v is None:
-            self.fishleg_aux["Sk"].data.mul_(np.sqrt(init_scale))
-            self.fishleg_aux["Sq"].data.mul_(np.sqrt(init_scale))
-            self.fishleg_aux["Sv"].data.mul_(np.sqrt(init_scale))
-            self.fishleg_aux["So"].data.mul_(np.sqrt(init_scale))
+            self.fishleg_aux["scalek"].data.mul_(np.sqrt(init_scale))
+            self.fishleg_aux["scaleq"].data.mul_(np.sqrt(init_scale))
+            self.fishleg_aux["scalev"].data.mul_(np.sqrt(init_scale))
+            self.fishleg_aux["scaleo"].data.mul_(np.sqrt(init_scale))
         else:
-            self.fishleg_aux["Sk"].data.copy_(
+            self.fishleg_aux["scalek"].data.copy_(
                 torch.cat([v[0], v[1][:, None]], dim=-1).T
             )
-            self.fishleg_aux["Sq"].data.copy_(
+            self.fishleg_aux["scaleq"].data.copy_(
                 torch.cat([v[2], v[3][:, None]], dim=-1)
             )
-            self.fishleg_aux["Sv"].data.copy_(
+            self.fishleg_aux["scalev"].data.copy_(
                 torch.cat([v[4], v[5][:, None]], dim=-1)
             )
-            self.fishleg_aux["So"].data.copy_(
+            self.fishleg_aux["scaleo"].data.copy_(
                 torch.cat([v[6], v[7][:, None]], dim=-1)
             )
     
     def Qv(self, v: Tuple, full=False) -> Tuple:
-        Sk = self.fishleg_aux["Sk"]
-        Sq = self.fishleg_aux["Sq"]
-        Sv = self.fishleg_aux["Sv"]
-        So = self.fishleg_aux["So"]
+        Sk = self.fishleg_aux["scalek"]
+        Sq = self.fishleg_aux["scaleq"]
+        Sv = self.fishleg_aux["scalev"]
+        So = self.fishleg_aux["scaleo"]
 
         Uk = Sk * torch.transpose(
                 torch.cat([v[0], v[1][:, None]], dim=-1),
@@ -183,20 +183,20 @@ class FishBertAttention(BertAttention, FishModule):
         #diagq: out, out, ..., bias 
         #Sq -> (in+1, out), -> -1 -> out, out, ..., bias
 
-        diagk = torch.kron(torch.sum(self.fishleg_aux["Q"]@L, dim=-1), 
-                        torch.sum(self.fishleg_aux["A"]@R, dim=-1)) * \
-                torch.square(self.fishleg_aux["Sk"].T).reshape(-1)
+        diagk = torch.kron(torch.sum(torch.square(self.fishleg_aux["Q"]@L), dim=-1), 
+                        torch.sum(torch.square(self.fishleg_aux["A"]@R), dim=-1)) * \
+                torch.square(self.fishleg_aux["scalek"].T).reshape(-1)
 
-        diagq = torch.kron(torch.sum(self.fishleg_aux["B"].T@L, dim=-1), 
-                        torch.sum(self.fishleg_aux["K"].T@R, dim=-1)) * \
-                torch.square(self.fishleg_aux["Sq"].T).reshape(-1)
+        diagq = torch.kron(torch.sum(torch.square(self.fishleg_aux["B"].T@L), dim=-1), 
+                        torch.sum(torch.square(self.fishleg_aux["K"].T@R), dim=-1)) * \
+                torch.square(self.fishleg_aux["scaleq"].T).reshape(-1)
 
-        diagv = torch.kron(torch.sum(self.fishleg_aux["C"].T@L, dim=-1), 
-                        torch.sum(self.fishleg_aux["O"].T@U, dim=-1)) * \
-                torch.square(self.fishleg_aux["Sv"].T).reshape(-1)
-        diago = torch.kron(torch.sum(self.fishleg_aux["V"]@L, dim=-1), 
-                        torch.sum(self.fishleg_aux["D"]@U, dim=-1)) * \
-                torch.square(self.fishleg_aux["So"].T).reshape(-1)
+        diagv = torch.kron(torch.sum(torch.square(self.fishleg_aux["C"].T@L), dim=-1), 
+                        torch.sum(torch.square(self.fishleg_aux["O"].T@U), dim=-1)) * \
+                torch.square(self.fishleg_aux["scalev"].T).reshape(-1)
+        diago = torch.kron(torch.sum(torch.square(self.fishleg_aux["V"]@L), dim=-1), 
+                        torch.sum(torch.square(self.fishleg_aux["D"]@U), dim=-1)) * \
+                torch.square(self.fishleg_aux["scaleo"].T).reshape(-1)
 
         K = diagk.reshape(self.all_head_size, self.hidden_size + 1)
         Q = diagq.reshape(self.hidden_size + 1, self.all_head_size).T
