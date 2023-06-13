@@ -107,11 +107,13 @@ class FishLinear(nn.Linear, FishModule):
         )
 
         self._layer_name = "Linear"
+
+        size = in_features + 1 if bias else in_features
         self.fishleg_aux = ParameterDict(
             {
-                "L": Parameter(torch.eye(in_features + 1)),
+                "L": Parameter(torch.eye(size)),
                 "R": Parameter(torch.eye(out_features)),
-                "scaleA": Parameter(torch.ones(out_features, in_features + 1)),
+                "scaleA": Parameter(torch.ones(out_features, size)),
             }
         )
         mask_L = torch.tril(torch.ones_like(self.fishleg_aux["L"])).to(device)
@@ -120,8 +122,9 @@ class FishLinear(nn.Linear, FishModule):
         mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
         self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
 
-        self.order = ["weight", "bias"]
+        self.order = ["weight", "bias"] if bias else ["weight"]
         self.device = device
+        self._bias = bias
 
     def warmup(
         self,
@@ -137,7 +140,10 @@ class FishLinear(nn.Linear, FishModule):
             else:
                 self.fishleg_aux["scaleA"].data.mul_(np.sqrt(init_scale))
         else:
-            A = torch.cat([v[0], v[1][:, None]], dim=-1)
+            if self._bias:
+                A = torch.cat([v[0], v[1][:, None]], dim=-1)
+            else:
+                A = v[0]
             if batch_speedup:
                 # nearest Kronecker product, using SVD
                 # TODO: Check the below! This was D instead of A!
@@ -170,14 +176,16 @@ class FishLinear(nn.Linear, FishModule):
         """
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
-        u = torch.cat([v[0], v[1][:, None]], dim=-1)
-
+        if self._bias:
+            u = torch.cat([v[0], v[1][:, None]], dim=-1)
+        else:
+            u = v[0]
         
         A = self.fishleg_aux["scaleA"]
         u = A * u
         u = torch.linalg.multi_dot((R.T, R, u, L, L.T))
         u = A * u
-        return (u[:, :-1], u[:, -1])
+        return (u[:, :-1], u[:, -1]) if self._bias else (u,)
 
     def Qg(self) -> Tuple[Tensor, Tensor]:
         """Speed up Qg product, when batch size is smaller than parameter size.
@@ -195,7 +203,7 @@ class FishLinear(nn.Linear, FishModule):
         lft = torch.linalg.multi_dot((R.T, R, self._g))
         rgt = torch.linalg.multi_dot((self._a, L, L.T))
         z = lft @ rgt
-        return (z[:, :-1], z[:, -1])
+        return (z[:, :-1], z[:, -1]) if self._bias else (z,)
 
     def save_layer_input(self, input_: List[Tensor]) -> None:
         a = input_[0].to(self.device).clone()
@@ -241,7 +249,7 @@ class FishLinear(nn.Linear, FishModule):
         diag = diag.reshape(L.shape[0], R.shape[0]).T
         return (
             diag[:, :-1], diag[:, -1]
-        )
+            ) if self._bias else (diag,)
 
 class FishEmbedding(nn.Embedding, FishModule):
     def __init__(
