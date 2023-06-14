@@ -5,6 +5,8 @@ import torch.nn as nn
 from torch.optim import Optimizer, Adam
 import sys
 
+from torch.utils.tensorboard import SummaryWriter
+
 from .layers import *
 from .likelihoods import FishLikelihoodBase
 
@@ -96,8 +98,7 @@ class FishLeg(Optimizer):
         update_aux_every: int = 10,
         warmup_steps: int = 0,
         device: str = "cpu",
-        verbose: bool = False,
-        writer: torch.utils.tensorboard.SummaryWriter or bool = False,
+        writer: SummaryWriter or bool = False,
     ) -> None:
         self.model = model
 
@@ -166,15 +167,23 @@ class FishLeg(Optimizer):
         # TODO: Add checking for this function!
         for n, (data_x, data_y) in enumerate(self.aux_dataloader):
             data_x, data_y = data_x.to(self.device), data_y.to(self.device)
-            output = self.model(data_x)
-            self.likelihood(output, data_y).backward()
+            pred_y = self.model(data_x)
+            loss = self.likelihood.nll(pred_y, data_y)
+
+            group = self.param_groups[0]
+            grads = torch.autograd.grad(
+                outputs=loss,
+                inputs=group["params"],
+                # create_graph=True,  # TODO: Check this!
+                allow_unused=True,
+            )
 
             for module in self.model.modules():
                 if not isinstance(module, nn.Sequential) and hasattr(module, "warmup"):
                     warm_g2 = []
-                    for name, param in module.named_parameters():
+                    for (name, param), grad in zip(module.named_parameters(), grads):
                         if "fishleg_aux" not in name:
-                            g2 = param.grad**2
+                            g2 = grad**2
                             warm_g2.append(g2)
                     module.add_warmup_grad(warm_g2)
                 else:
@@ -260,10 +269,16 @@ class FishLeg(Optimizer):
         # TODO: I think using autograd.grad avoids accumulating gradients like backward does?
         grads = torch.autograd.grad(
             outputs=loss,
-            inputs=self.param_groups[0]["params"],
+            inputs=group["params"],
             # create_graph=True,  # TODO: Check this!
             allow_unused=True,
         )
+
+        u2 = 0.0
+        for group in self.param_groups:
+            for params in group["params"]:
+                u2 = u2 + torch.sum(params.grad * params.grad)
+        u_norm = torch.sqrt(u2)
 
         reg_term = 0.0
         quad_term = 0.0
@@ -275,7 +290,7 @@ class FishLeg(Optimizer):
                 layer_grads = []
                 for name, param in module.named_parameters():
                     if "fishleg_aux" not in name:
-                        layer_grads.append(param.grad.data)
+                        layer_grads.append(param.grad.data / u_norm)
 
                 nat_grads = module.Qv(layer_grads)
 
@@ -311,7 +326,6 @@ class FishLeg(Optimizer):
             a_p.grad = aux_grads[n]
 
         self.aux_opt.step()
-
         return aux_loss.item()
 
     # TODO: What do we need here? - This method is taken from Adam, to discuss!
@@ -423,6 +437,7 @@ class FishLeg(Optimizer):
 
                             exp_avg.mul_(beta).add_(nat_grad, alpha=1 - beta)
 
+                            # TODO: CHECK
                             if weight_decay != 0:
                                 exp_avg = exp_avg.add(param, alpha=weight_decay)
 

@@ -36,23 +36,13 @@ from optim.FishLeg import FishLeg, FISH_LIKELIHOODS
 ...
 likelihood = FISH_LIKELIHOODS["FixedGaussian".lower()](sigma=1.0, device=device)
 
-    def nll(model, data_x, data_y):
-        pred_y = model.forward(data_x)
-        return likelihood.nll(data_y, pred_y)
-
-    def draw(model, data_x):
-        pred_y = model.forward(data_x)
-        return likelihood.draw(pred_y)
-
-
-
 ...
 
 model = nn.Sequential(...).to(device)
-optimizer =  opt = FishLeg(
+
+optimizer = FishLeg(
         model,
-        draw,
-        nll,
+        likelihood
         aux_loader,
         lr=eta_fl,
         eps=eps,

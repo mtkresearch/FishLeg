@@ -28,6 +28,7 @@ class FishLinear(nn.Linear, FishModule):
         )
 
         self._layer_name = "Linear"
+        self.init_scale = init_scale
         self.fishleg_aux = ParameterDict(
             {
                 "L": Parameter(torch.eye(in_features + 1)),
@@ -58,7 +59,9 @@ class FishLinear(nn.Linear, FishModule):
         self.warmup_state += torch.cat([grad[0], grad[1][:, None]], dim=-1)
 
     def finalise_warmup(self, damping: float, num_steps: int) -> None:
-        self.fishleg_aux["A"].data.div_(self.warmup_state.div_(num_steps).add_(damping))
+        self.fishleg_aux["A"].data.div_(np.sqrt(self.init_scale)).div_(
+            self.warmup_state.div_(num_steps).add_(damping)
+        )
 
     def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         """

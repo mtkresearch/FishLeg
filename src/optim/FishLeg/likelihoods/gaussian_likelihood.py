@@ -38,25 +38,3 @@ class GaussianLikelihood(FishLikelihoodBase):
         return preds + torch.normal(0, self.sigma.data, size=preds.shape).to(
             self.device
         )
-
-    def get_parameters(self) -> List:
-        return [
-            self.sigma,
-        ]
-
-    def init_aux(self, init_scale) -> None:
-        self.lam = Parameter(torch.tensor(init_scale))
-        self.lam.to(self.device)
-        self.order = [
-            "lambda",
-        ]
-
-    def get_aux_parameters(self) -> List:
-        return [
-            self.lam,
-        ]
-
-    def Qv(self, v) -> List:
-        return [
-            torch.square(self.lam) * v[0],
-        ]
