@@ -61,6 +61,8 @@ loader = dataloader(batch_size=100)
 
 student_model = FishLinear(N, 1, init_scale=1 / gamma)
 
+student_model.weight.data = teacher_model.weight.data
+
 likelihood = FISH_LIKELIHOODS["gaussian"](sigma=1.0)
 
 opt = FishLeg(
@@ -71,7 +73,7 @@ opt = FishLeg(
     beta=0.7,
     weight_decay=1e-5,
     aux_lr=0.001,
-    aux_betas=(0.9, 0.999),
+    aux_betas=(0.7, 0.9),
     aux_eps=1e-8,
     warmup_steps=0,
     damping=gamma,
@@ -87,7 +89,7 @@ llt = torch.matmul(
 A = student_model.fishleg_aux["A"][:, :N].squeeze()
 
 
-for epoch in range(30):
+for epoch in range(100):
     with tqdm(loader, unit="batch") as tepoch:
         running_loss = 0
         tepoch.set_description(f"Epoch {epoch}")
@@ -127,25 +129,25 @@ for epoch in range(30):
                 eig_app = torch.svd(F_inv)[1]
                 eig_mse = torch.sum((eig_app - targets) ** 2).item()
 
-                for n, (eigenval, target) in enumerate(zip(eig_app, targets)):
-                    writer.add_scalars(
-                        f"Eigenvalues/{n}",
-                        {"pred": eigenval, "target": target},
-                        (epoch * 100) + batch,
-                    )
-                    if n == 5:
-                        break
+                # for n, (eigenval, target) in enumerate(zip(eig_app, targets)):
+                #     writer.add_scalars(
+                #         f"Eigenvalues/{n}",
+                #         {"pred": eigenval, "target": target},
+                #         (epoch * 100) + batch,
+                #     )
+                #     if n == 5:
+                #         break
 
-                for n, (eigenval, target) in enumerate(
-                    zip(reversed(eig_app), reversed(targets))
-                ):
-                    writer.add_scalars(
-                        f"Eigenvalues/{100 - n}",
-                        {"pred": eigenval, "target": target},
-                        (epoch * 100) + batch,
-                    )
-                    if n == 5:
-                        break
+                # for n, (eigenval, target) in enumerate(
+                #     zip(reversed(eig_app), reversed(targets))
+                # ):
+                #     writer.add_scalars(
+                #         f"Eigenvalues/{100 - n}",
+                #         {"pred": eigenval, "target": target},
+                #         (epoch * 100) + batch,
+                #     )
+                #     if n == 5:
+                #         break
 
                 tepoch.set_postfix(loss=running_loss / (batch + 1), eig_mse=eig_mse)
 

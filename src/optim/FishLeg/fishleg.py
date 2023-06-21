@@ -266,11 +266,9 @@ class FishLeg(Optimizer):
 
         loss = self.likelihood.nll(pred_y, samples_y)
 
-        # TODO: I think using autograd.grad avoids accumulating gradients like backward does?
         grads = torch.autograd.grad(
             outputs=loss,
             inputs=group["params"],
-            # create_graph=True,  # TODO: Check this!
             allow_unused=True,
         )
 

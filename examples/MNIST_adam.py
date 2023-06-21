@@ -72,9 +72,6 @@ lr = 0.001
 weight_decay = 1e-5
 # eps = 1e-8
 
-writer = SummaryWriter(
-    log_dir=f"runs/MNIST_adam/lr={lr}_lambda={weight_decay}/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
-)
 
 opt = optim.Adam(
     model.parameters(),
@@ -82,6 +79,10 @@ opt = optim.Adam(
     # betas=betas,
     weight_decay=weight_decay,
     # eps=eps,
+)
+
+writer = SummaryWriter(
+    log_dir=f"runs/MNIST_adam/lr={lr}_lambda={weight_decay}/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
 )
 
 epochs = 100
