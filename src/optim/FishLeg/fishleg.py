@@ -97,6 +97,8 @@ class FishLeg(Optimizer):
         damping: float = 5e-1,
         update_aux_every: int = 10,
         warmup_steps: int = 0,
+        method: str = "rank-1",
+        eps: float = 1e-4,
         device: str = "cpu",
         writer: SummaryWriter or bool = False,
     ) -> None:
@@ -107,6 +109,9 @@ class FishLeg(Optimizer):
 
         self.device = device
         self.writer = writer
+
+        self.method = method
+        self.eps = eps
 
         defaults = dict(
             lr=lr,
@@ -278,34 +283,99 @@ class FishLeg(Optimizer):
                 u2 = u2 + torch.sum(params.grad * params.grad)
         u_norm = torch.sqrt(u2)
 
-        reg_term = 0.0
-        quad_term = 0.0
-        linear_term = 0.0
+        aux_loss = 0
 
-        p_idx = 0
-        for module in self.model.modules():
-            if not isinstance(module, nn.Sequential) and hasattr(module, "Qv"):
-                layer_grads = []
-                for name, param in module.named_parameters():
-                    if "fishleg_aux" not in name:
-                        layer_grads.append(param.grad.data / u_norm)
+        if self.method == "antithetic":
+            nat_grads = []
+            p_idx = 0
+            for module in self.model.modules():
+                if not isinstance(module, nn.Sequential) and hasattr(module, "Qv"):
+                    layer_grads = []
+                    for name, param in module.named_parameters():
+                        if "fishleg_aux" not in name:
+                            layer_grads.append(param.grad.data)
 
-                nat_grads = module.Qv(layer_grads)
+                    qv, qv_b = module.Qv(layer_grads)
+                    aux_loss -= torch.sum(grads[p_idx] * qv)
+                    aux_loss -= torch.sum(grads[p_idx + 1] * qv_b)
 
-                for n, (name, param) in enumerate(module.named_parameters()):
-                    if "fishleg_aux" not in name:
-                        nat_grad = nat_grads[n]
-                        sample_grad = grads[p_idx]
-                        true_grad = layer_grads[n]
-                        p_idx += 1
+                    aux_loss += damping * qv.norm(p=2) ** 2
+                    aux_loss += damping * qv_b.norm(p=2) ** 2
 
-                        quad_term += torch.sum(sample_grad * nat_grad)
-                        linear_term += torch.sum(true_grad * nat_grad)
-                        reg_term += damping * torch.sum(nat_grad * nat_grad)
+                    nat_grads.append(qv)
+                    nat_grads.append(qv_b)
+                    p_idx += 2
 
-        quad_term = quad_term**2
+            # Add to gradients
+            p_idx = 0
+            for module in self.model.modules():
+                if not isinstance(module, nn.Sequential) and hasattr(module, "Qv"):
+                    layer_grads = []
+                    for name, param in module.named_parameters():
+                        if "fishleg_aux" not in name:
+                            param.data += self.eps * nat_grads[p_idx]
+                            p_idx += 1
 
-        aux_loss = 0.5 * (reg_term + quad_term) - linear_term
+            pred_y = self.model(data_x)
+            plus_loss = self.likelihood.nll(pred_y, samples_y)
+
+            # Minus gradients
+            p_idx = 0
+            for module in self.model.modules():
+                if not isinstance(module, nn.Sequential) and hasattr(module, "Qv"):
+                    layer_grads = []
+                    for name, param in module.named_parameters():
+                        if "fishleg_aux" not in name:
+                            param.data -= 2 * self.eps * nat_grads[p_idx]
+                            p_idx += 1
+
+            pred_y = self.model(data_x)
+
+            minus_loss = self.likelihood.nll(pred_y, samples_y)
+
+            # Restore parameters
+            p_idx = 0
+            for module in self.model.modules():
+                if not isinstance(module, nn.Sequential) and hasattr(module, "Qv"):
+                    layer_grads = []
+                    for name, param in module.named_parameters():
+                        if "fishleg_aux" not in name:
+                            param.data += self.eps * nat_grads[p_idx]
+                            p_idx += 1
+
+            aux_loss += 0.5 * (plus_loss + minus_loss)
+
+            aux_loss /= 1.0 + torch.norm(plus_loss.detach() + minus_loss.detach())
+
+        else:
+            reg_term = 0.0
+            quad_term = 0.0
+            linear_term = 0.0
+
+            p_idx = 0
+            for module in self.model.modules():
+                if not isinstance(module, nn.Sequential) and hasattr(module, "Qv"):
+                    layer_grads = []
+                    for name, param in module.named_parameters():
+                        if "fishleg_aux" not in name:
+                            layer_grads.append(param.grad.data / u_norm)
+
+                    nat_grads = module.Qv(layer_grads)
+
+                    for n, (name, param) in enumerate(module.named_parameters()):
+                        if "fishleg_aux" not in name:
+                            nat_grad = nat_grads[n]
+                            sample_grad = grads[p_idx]
+                            true_grad = layer_grads[n]
+                            p_idx += 1
+
+                            quad_term += torch.sum(sample_grad * nat_grad)
+                            linear_term += torch.sum(true_grad * nat_grad)
+                            reg_term += damping * torch.sum(nat_grad * nat_grad)
+
+            quad_term = quad_term**2
+
+            aux_loss = 0.5 * (reg_term + quad_term) - linear_term
 
         if self.writer:
             self.writer.add_scalar(
@@ -317,7 +387,6 @@ class FishLeg(Optimizer):
         aux_grads = torch.autograd.grad(
             outputs=aux_loss,
             inputs=self.aux_opt.param_groups[0]["params"],
-            # create_graph=True,  # TODO: Check this!
             allow_unused=True,
         )
         for n, a_p in enumerate(self.aux_opt.param_groups[0]["params"]):

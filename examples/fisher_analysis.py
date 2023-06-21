@@ -61,7 +61,7 @@ loader = dataloader(batch_size=100)
 
 student_model = FishLinear(N, 1, init_scale=1 / gamma)
 
-student_model.weight.data = teacher_model.weight.data
+# student_model.weight.data = teacher_model.weight.data
 
 likelihood = FISH_LIKELIHOODS["gaussian"](sigma=1.0)
 
@@ -69,15 +69,17 @@ opt = FishLeg(
     student_model,
     loader,
     likelihood,
-    lr=0.00001,
+    lr=0.0001,
     beta=0.7,
     weight_decay=1e-5,
     aux_lr=0.001,
-    aux_betas=(0.7, 0.9),
+    aux_betas=(0.9, 0.9),
     aux_eps=1e-8,
     warmup_steps=0,
     damping=gamma,
     update_aux_every=10,
+    method="antithetic",
+    eps=1e-4,
     writer=writer,
 )
 
