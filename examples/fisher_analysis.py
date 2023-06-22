@@ -90,8 +90,26 @@ llt = torch.matmul(
 )
 A = student_model.fishleg_aux["A"][:, :N].squeeze()
 
+target_diag = np.diag(1 / (Lambda + gamma))
 
-for epoch in range(100):
+L = student_model.fishleg_aux["L"][:N, :N]
+R = student_model.fishleg_aux["R"][:N, :N]
+A = student_model.fishleg_aux["A"][:, :N]
+
+Q = (
+    U.T
+    @ torch.diag(A.squeeze(0))
+    @ torch.kron(L @ L.T, R.T @ R)
+    @ torch.diag(A.squeeze(0))
+    @ U
+)
+final_diag = torch.diag(Q).detach().numpy()
+
+fig, ax = plt.subplots(1, 1)
+ax.plot(sorted(final_diag), sorted(target_diag), ".")
+ax.plot(sorted(target_diag), sorted(target_diag), ls="--", color="k")
+
+for epoch in range(1, 101):
     with tqdm(loader, unit="batch") as tepoch:
         running_loss = 0
         tepoch.set_description(f"Epoch {epoch}")
@@ -153,24 +171,23 @@ for epoch in range(100):
 
                 tepoch.set_postfix(loss=running_loss / (batch + 1), eig_mse=eig_mse)
 
+    if epoch % 25 == 0:
+        target_diag = np.diag(1 / (Lambda + gamma))
 
-target_diag = np.diag(1 / (Lambda + gamma))
+        L = student_model.fishleg_aux["L"][:N, :N]
+        R = student_model.fishleg_aux["R"][:N, :N]
+        A = student_model.fishleg_aux["A"][:, :N]
 
-L = student_model.fishleg_aux["L"][:N, :N]
-R = student_model.fishleg_aux["R"][:N, :N]
-A = student_model.fishleg_aux["A"][:, :N]
+        Q = (
+            U.T
+            @ torch.diag(A.squeeze(0))
+            @ torch.kron(L @ L.T, R.T @ R)
+            @ torch.diag(A.squeeze(0))
+            @ U
+        )
+        final_diag = torch.diag(Q).detach().numpy()
 
-Q = (
-    U.T
-    @ torch.diag(A.squeeze(0))
-    @ torch.kron(L @ L.T, R.T @ R)
-    @ torch.diag(A.squeeze(0))
-    @ U
-)
-final_diag = torch.diag(Q).detach().numpy()
+        ax.plot(sorted(final_diag), sorted(target_diag), ".")
+        ax.plot(sorted(target_diag), sorted(target_diag), ls="--", color="k")
 
-
-fig, ax = plt.subplots(1, 1)
-ax.plot(sorted(final_diag), sorted(target_diag), ".")
-ax.plot(sorted(target_diag), sorted(target_diag), ls="--", color="k")
 fig.savefig("test.png")

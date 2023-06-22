@@ -299,8 +299,8 @@ class FishLeg(Optimizer):
                     aux_loss -= torch.sum(grads[p_idx] * qv)
                     aux_loss -= torch.sum(grads[p_idx + 1] * qv_b)
 
-                    aux_loss += damping * qv.norm(p=2) ** 2
-                    aux_loss += damping * qv_b.norm(p=2) ** 2
+                    aux_loss += damping / 2 * torch.sum(qv**2)
+                    aux_loss += damping / 2 * torch.sum(qv_b**2)
 
                     nat_grads.append(qv)
                     nat_grads.append(qv_b)
