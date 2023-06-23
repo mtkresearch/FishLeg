@@ -61,7 +61,7 @@ loader = dataloader(batch_size=100)
 
 student_model = FishLinear(N, 1, init_scale=1 / gamma)
 
-# student_model.weight.data = teacher_model.weight.data
+student_model.weight.data = teacher_model.weight.data
 
 likelihood = FISH_LIKELIHOODS["gaussian"](sigma=1.0)
 

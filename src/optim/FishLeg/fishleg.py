@@ -154,72 +154,6 @@ class FishLeg(Optimizer):
             for s in state_values:
                 s["step"] = torch.tensor(float(s["step"]))
 
-    def warmup_aux(self, num_steps: int) -> None:
-        """
-        Warm up auxiliary parameters with approximate Adam.
-        """
-        for n, (data_x, data_y) in enumerate(self.aux_dataloader):
-            if n == num_steps:
-                break
-
-            pred_y = self.model(data_x)
-            loss = self.likelihood.nll(pred_y, data_y)
-
-            group = self.param_groups[0]
-            grads = torch.autograd.grad(
-                outputs=loss,
-                inputs=group["params"],
-                allow_unused=True,
-            )
-
-            for module in self.model.modules():
-                if isinstance(module, FishModule):
-                    warm_g2 = []
-                    for (name, param), grad in zip(module.named_parameters(), grads):
-                        if "fishleg_aux" not in name:
-                            g2 = grad**2
-                            warm_g2.append(g2)
-                    module.add_warmup_grad(warm_g2)
-                else:
-                    continue
-
-        group = self.param_groups[0]
-        damping = group["damping"]
-
-        # Moves through all diagonal Fisher initialisations and divides by the warmup
-        # factor
-        for module in self.model.modules():
-            if isinstance(module, FishModule):
-                module.finalise_warmup(damping, num_steps)
-
-    def fish_pretrain_step(
-        self,
-        dataloader: torch.utils.data.DataLoader,
-        criterion: Callable[
-            [nn.Module, Tuple[torch.Tensor, torch.Tensor]], torch.Tensor
-        ],
-    ) -> List:
-        data_x, data_y = next(iter(dataloader))
-
-        self.zero_grad()
-
-        pred_y = self.model(data_x)
-
-        criterion(pred_y, data_y).backward()
-
-        for param in self.param_groups["params"]:
-            param.grad.data.mul_(-1)
-
-        data_x, data_y = next(iter(dataloader))
-
-        pred_y = self.model(data_x)
-
-        criterion(pred_y, data_y).backward()
-
-        aux_loss = self.update_aux()
-
-        return aux_loss
-
     def update_aux(self) -> None:
         """
         Performs a single auxliarary parameter update
@@ -240,74 +174,97 @@ class FishLeg(Optimizer):
         method = group["method"]
         method_kwargs = group["method_kwargs"]
 
-        pred_y = self.model(data_x)
-
         with torch.no_grad():
+            pred_y = self.model(data_x)
             samples_y = self.likelihood.draw(pred_y)
 
-        loss = self.likelihood.nll(pred_y, samples_y)
-
-        grads = torch.autograd.grad(
-            outputs=loss,
-            inputs=group["params"],
-            allow_unused=True,
-        )
-
-        u2 = 0.0
-        for group in self.param_groups:
-            for params in group["params"]:
-                u2 = u2 + torch.sum(params.grad * params.grad)
-        u_norm = torch.sqrt(u2)
+        g2 = 0.0
+        for g in group["params"]:
+            g2 += torch.sum(g**2)
+        g_norm = torch.sqrt(g2.detach())
 
         aux_loss = 0
 
+        v_model = []
+        v2 = 0
+        for module in self.model.modules():
+            if isinstance(module, FishModule):
+                layer_grads = []
+                for name, param in module.named_parameters():
+                    if "fishleg_aux" not in name:
+                        layer_grads.append(param.grad.data / g_norm)
+
+                v_layer = module.Qv(layer_grads)
+
+                for v in v_layer:
+                    v2 += torch.sum(v**2)
+                    v_model.append(v)
+
+        v_norm = torch.sqrt(v2.detach())
+
         if method == "antithetic":
-            try:
-                eps = method_kwargs["eps"]
-            except KeyError:
-                eps = 1e-4
+            eps = method_kwargs["eps"] if "eps" in method_kwargs.keys() else 1e-4
 
-            nat_grads = []
-            p_idx = 0
-            for module in self.model.modules():
-                if isinstance(module, FishModule):
-                    layer_grads = []
-                    for name, param in module.named_parameters():
-                        if "fishleg_aux" not in name:
-                            layer_grads.append(param.grad.data)
-
-                    qv, qv_b = module.Qv(layer_grads)
-                    aux_loss -= torch.sum(grads[p_idx] * qv)
-                    aux_loss -= torch.sum(grads[p_idx + 1] * qv_b)
-
-                    aux_loss += damping / 2 * torch.sum(qv**2)
-                    aux_loss += damping / 2 * torch.sum(qv_b**2)
-
-                    nat_grads.append(qv)
-                    nat_grads.append(qv_b)
-                    p_idx += 2
+            def _augment_params_by(eps: float, nat_grads: List, norm: float = 1):
+                p_idx = 0
+                for module in self.model.modules():
+                    if isinstance(module, FishModule):
+                        for name, param in module.named_parameters():
+                            if "fishleg_aux" not in name:
+                                param.data += eps * nat_grads[p_idx] / norm
+                                p_idx += 1
 
             # Add to gradients
-            self._augment_params_by(eps, nat_grads)
+            _augment_params_by(eps, v_model, norm=v_norm)
 
             pred_y = self.model(data_x)
             plus_loss = self.likelihood.nll(pred_y, samples_y)
 
+            plus_grad = torch.autograd.grad(
+                plus_loss,
+                inputs=group["params"],
+                allow_unused=True,
+            )
+
             # Minus gradients
-            self._augment_params_by(-2 * eps, nat_grads)
+            _augment_params_by(-2 * eps, v_model, norm=v_norm)
 
             pred_y = self.model(data_x)
-
             minus_loss = self.likelihood.nll(pred_y, samples_y)
 
+            minus_grad = torch.autograd.grad(
+                minus_loss,
+                inputs=group["params"],
+                allow_unused=True,
+            )
+
             # Restore parameters
-            self._augment_params_by(eps, nat_grads)
+            _augment_params_by(eps, v_model, norm=v_norm)
 
-            aux_loss += 0.5 * (plus_loss + minus_loss)
+            Fv_norm = list(map(lambda a, b: 0.5 * (a - b) / eps, plus_grad, minus_grad))
 
-            aux_loss /= 1.0 + torch.norm(plus_loss.detach() + minus_loss.detach())
+            v_adj = list(
+                map(
+                    lambda Fv, p: Fv / v_norm - (p.grad.data / g_norm) / v_norm**2,
+                    Fv_norm,
+                    group["params"],
+                )
+            )
+
+            aux_loss = 0
+
+            for v_a, v in zip(v_adj, v_model):
+                aux_loss += torch.dot(v_a.reshape(-1), v.reshape(-1))
 
         elif method == "rank-1":
+            loss = self.likelihood.nll(pred_y, samples_y)
+
+            gs = torch.autograd.grad(
+                outputs=loss,
+                inputs=group["params"],
+                allow_unused=True,
+            )
+
             reg_term = 0.0
             quad_term = 0.0
             linear_term = 0.0
@@ -315,17 +272,10 @@ class FishLeg(Optimizer):
             p_idx = 0
             for module in self.model.modules():
                 if isinstance(module, FishModule):
-                    layer_grads = []
-                    for name, param in module.named_parameters():
-                        if "fishleg_aux" not in name:
-                            layer_grads.append(param.grad.data / u_norm)
-
-                    nat_grads = module.Qv(layer_grads)
-
                     for n, (name, param) in enumerate(module.named_parameters()):
                         if "fishleg_aux" not in name:
-                            nat_grad = nat_grads[n]
-                            sample_grad = grads[p_idx]
+                            nat_grad = v_model[n]
+                            sample_grad = gs[p_idx]
                             true_grad = layer_grads[n]
                             p_idx += 1
 
@@ -348,8 +298,11 @@ class FishLeg(Optimizer):
             self.writer.add_scalar(
                 "AuxLoss/train",
                 aux_loss,
-                self.state[self.param_groups[0]["params"][-1]]["step"],
+                self.state[group["params"][-1]]["step"],
             )
+
+        if damping:
+            aux_loss += damping * v2 / v_norm
 
         aux_grads = torch.autograd.grad(
             outputs=aux_loss,
@@ -361,15 +314,6 @@ class FishLeg(Optimizer):
 
         self.aux_opt.step()
         return aux_loss.item()
-
-    def _augment_params_by(self, eps: float, nat_grads: List):
-        p_idx = 0
-        for module in self.model.modules():
-            if isinstance(module, FishModule):
-                for name, param in module.named_parameters():
-                    if "fishleg_aux" not in name:
-                        param.data -= 2 * eps * nat_grads[p_idx]
-                        p_idx += 1
 
     def _init_group(
         self,

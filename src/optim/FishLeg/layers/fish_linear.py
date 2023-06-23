@@ -49,20 +49,6 @@ class FishLinear(nn.Linear, FishModule):
 
         self.warmup_state = torch.ones_like(self.fishleg_aux["A"]).to(device)
 
-    def add_warmup_grad(
-        self,
-        grad: Tuple[Tensor, Tensor],
-    ) -> None:
-        # Add this into an overload of to() function?
-        self.warmup_state = self.warmup_state.to(grad[0].device)
-
-        self.warmup_state += torch.cat([grad[0], grad[1][:, None]], dim=-1)
-
-    def finalise_warmup(self, damping: float, num_steps: int) -> None:
-        self.fishleg_aux["A"].data.div_(np.sqrt(self.init_scale)).div_(
-            self.warmup_state.div_(num_steps).add_(damping)
-        )
-
     def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         """
         TODO: Check this...
