@@ -72,14 +72,16 @@ opt = FishLeg(
     lr=0.0001,
     beta=0.7,
     weight_decay=1e-5,
-    aux_lr=0.001,
+    aux_lr=0.01,
     aux_betas=(0.9, 0.9),
     aux_eps=1e-8,
     warmup_steps=0,
     damping=gamma,
     update_aux_every=10,
     method="antithetic",
-    eps=1e-4,
+    method_kwargs={
+        "eps": 1e-4,
+    },
     writer=writer,
 )
 
