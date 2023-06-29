@@ -99,6 +99,7 @@ class FishLeg(Optimizer):
         warmup_steps: int = 0,
         method: str = "rank-1",
         method_kwargs: Dict = {},
+        precondition_aux: bool = True,
         writer: SummaryWriter or bool = False,
     ) -> None:
         self.model = model
@@ -118,6 +119,7 @@ class FishLeg(Optimizer):
             warmup_steps=warmup_steps,
             method=method,
             method_kwargs=method_kwargs,
+            precondition_aux=precondition_aux
         )
         params = [
             param
@@ -173,6 +175,7 @@ class FishLeg(Optimizer):
         damping = group["damping"]
         method = group["method"]
         method_kwargs = group["method_kwargs"]
+        precondition_aux = group["precondition_aux"]
 
         with torch.no_grad():
             pred_y = self.model(data_x)
@@ -180,10 +183,10 @@ class FishLeg(Optimizer):
 
         g2 = 0.0
         for g in group["params"]:
-            g2 += torch.sum(g**2)
+            g2 += torch.sum(g.grad.data**2)
         g_norm = torch.sqrt(g2.detach())
 
-        aux_loss = 0
+        surrogate_loss = 0
 
         v_model = []
         v2 = 0
@@ -197,10 +200,12 @@ class FishLeg(Optimizer):
                 v_layer = module.Qv(layer_grads)
 
                 for v in v_layer:
-                    v2 += torch.sum(v**2)
+                    v2 += torch.sum(v.detach()**2)
                     v_model.append(v)
 
-        v_norm = torch.sqrt(v2.detach())
+        v_norm = torch.sqrt(v2)
+
+        # the different methods differ in how they compute Fv_norm
 
         if method == "antithetic":
             eps = method_kwargs["eps"] if "eps" in method_kwargs.keys() else 1e-4
@@ -211,7 +216,7 @@ class FishLeg(Optimizer):
                     if isinstance(module, FishModule):
                         for name, param in module.named_parameters():
                             if "fishleg_aux" not in name:
-                                param.data += eps * nat_grads[p_idx] / norm
+                                param.data += eps * nat_grads[p_idx].detach() / norm
                                 p_idx += 1
 
             # Add to gradients
@@ -243,19 +248,7 @@ class FishLeg(Optimizer):
 
             Fv_norm = list(map(lambda a, b: 0.5 * (a - b) / eps, plus_grad, minus_grad))
 
-            v_adj = list(
-                map(
-                    lambda Fv, p: Fv / v_norm - (p.grad.data / g_norm) / v_norm**2,
-                    Fv_norm,
-                    group["params"],
-                )
-            )
-
-            aux_loss = 0
-
-            for v_a, v in zip(v_adj, v_model):
-                aux_loss += torch.dot(v_a.reshape(-1), v.reshape(-1))
-
+        
         elif method == "rank-1":
             loss = self.likelihood.nll(pred_y, samples_y)
 
@@ -265,55 +258,72 @@ class FishLeg(Optimizer):
                 allow_unused=True,
             )
 
-            reg_term = 0.0
-            quad_term = 0.0
-            linear_term = 0.0
-
             p_idx = 0
+            g_dot_w = 0
             for module in self.model.modules():
                 if isinstance(module, FishModule):
-                    for n, (name, param) in enumerate(module.named_parameters()):
+                    for name, param in module.named_parameters():
                         if "fishleg_aux" not in name:
-                            nat_grad = v_model[n]
+                            nat_grad = v_model[p_idx]
                             sample_grad = gs[p_idx]
-                            true_grad = layer_grads[n]
+                            g_dot_w += torch.sum(nat_grad.detach() * sample_grad)
                             p_idx += 1
-
-                            quad_term += torch.sum(sample_grad * nat_grad)
-                            linear_term += torch.sum(true_grad * nat_grad)
-                            reg_term += damping * torch.sum(nat_grad * nat_grad)
-
-            quad_term = quad_term**2
-
-            aux_loss = 0.5 * (reg_term + quad_term) - linear_term
-
-            aux_loss /= 1.0 + torch.norm(quad_term.detach() + reg_term.detach())
-
+                                            
+            Fv_norm = list(map(lambda a: g_dot_w * a / v_norm, v_model))
+       
         else:
             raise NotImplementedError(
                 f"{method} method of approximation not implemented yet!"
             )
 
+        v_adj = list(
+            map(
+                lambda Fv, p: Fv / v_norm - (p.grad.data / g_norm) / v_norm**2,
+                Fv_norm,
+                group["params"],
+            )
+        )
+
+        if precondition_aux:
+            with torch.no_grad():
+                v_adj_new = []
+                count = 0
+                for module in self.model.modules():
+                    if isinstance(module, FishModule):
+                        v_adj_new.append(module.Qv(v_adj[count])/v_norm)
+                        count += 1
+                v_adj = v_adj_new
+
+        for v_a, v in zip(v_adj, v_model):
+            surrogate_loss += torch.dot(v_a.reshape(-1), v.reshape(-1))
+
+        if damping:
+            for v in v_model:
+                surrogate_loss += torch.dot(v.detach().reshape(-1), v.reshape(-1)) * damping / (v_norm**2)
+
+        surrogate_loss.backward()
+
         if self.writer:
             self.writer.add_scalar(
                 "AuxLoss/train",
-                aux_loss,
+                surrogate_loss.detach(),
                 self.state[group["params"][-1]]["step"],
             )
-
-        if damping:
-            aux_loss += damping * v2 / v_norm
-
-        aux_grads = torch.autograd.grad(
-            outputs=aux_loss,
-            inputs=self.aux_opt.param_groups[0]["params"],
-            allow_unused=True,
-        )
-        for n, a_p in enumerate(self.aux_opt.param_groups[0]["params"]):
-            a_p.grad = aux_grads[n]
+            self.writer.add_scalar(
+                "lr",
+                group["lr"],
+                self.state[group["params"][-1]]["step"],
+            )
+        # aux_grads = torch.autograd.grad(
+        #     outputs=surrogate_loss,
+        #     inputs=self.aux_opt.param_groups[0]["params"],
+        #     allow_unused=True,
+        # )
+        # for n, a_p in enumerate(self.aux_opt.param_groups[0]["params"]):
+        #     a_p.grad = aux_grads[n]
 
         self.aux_opt.step()
-        return aux_loss.item()
+        return surrogate_loss.item()
 
     def _init_group(
         self,
