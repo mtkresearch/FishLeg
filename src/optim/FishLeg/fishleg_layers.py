@@ -116,11 +116,11 @@ class FishLinear(nn.Linear, FishModule):
                 "scaleA": Parameter(torch.ones(out_features, size)),
             }
         )
-        mask_L = torch.tril(torch.ones_like(self.fishleg_aux["L"])).to(device)
-        self.fishleg_aux["L"].register_hook(get_zero_grad_hook(mask_L))
+        #mask_L = torch.tril(torch.ones_like(self.fishleg_aux["L"])).to(device)
+        #self.fishleg_aux["L"].register_hook(get_zero_grad_hook(mask_L))
 
-        mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
-        self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
+        #mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
+        #self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
 
         self.order = ["weight", "bias"] if bias else ["weight"]
         self.device = device
@@ -183,7 +183,7 @@ class FishLinear(nn.Linear, FishModule):
         
         A = self.fishleg_aux["scaleA"]
         u = A * u
-        u = torch.linalg.multi_dot((R.T, R, u, L, L.T))
+        u = torch.linalg.multi_dot((R.T, R, u, L.T, L))
         u = A * u
         return (u[:, :-1], u[:, -1]) if self._bias else (u,)
 
@@ -201,7 +201,7 @@ class FishLinear(nn.Linear, FishModule):
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
         lft = torch.linalg.multi_dot((R.T, R, self._g))
-        rgt = torch.linalg.multi_dot((self._a, L, L.T))
+        rgt = torch.linalg.multi_dot((self._a, L.T, L))
         z = lft @ rgt
         return (z[:, :-1], z[:, -1]) if self._bias else (z,)
 
@@ -242,7 +242,7 @@ class FishLinear(nn.Linear, FishModule):
         """
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
-        diag = torch.kron(torch.sum(L * L, dim=1), torch.sum(R * R, dim=0))
+        diag = torch.kron(torch.sum(L * L, dim=0), torch.sum(R * R, dim=0))
         diag = diag * \
                 torch.square(self.fishleg_aux["scaleA"].T).reshape(-1)
 

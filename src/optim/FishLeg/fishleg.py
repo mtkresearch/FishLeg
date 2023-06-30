@@ -14,7 +14,7 @@ import copy
 from transformers.models.bert.modeling_bert import BertAttention
 
 from .utils import recursive_setattr, recursive_getattr, update_dict, get_named_layers_by_regex, NamedLayer
-from transformers import get_scheduler
+from transformers import get_linear_schedule_with_warmup,get_scheduler
 
 from .layers import *
 from .fishleg_layers import *
@@ -154,7 +154,8 @@ class FishLeg(Optimizer):
         config = None,
         verbose = False,
         output_dir = None,
-        random = False
+        random = False,
+        u_batch = 1
     ) -> None:
         self.model = model
         self.lr = lr
@@ -175,7 +176,7 @@ class FishLeg(Optimizer):
         self.damping = damping
         self.verbose = verbose
         self.output_dir = output_dir
-        self.u_batch = 4
+        self.u_batch = u_batch
         self.random = random
 
         self.draw = draw
@@ -214,10 +215,9 @@ class FishLeg(Optimizer):
         )
 
         if num_steps is not None:
-            self.aux_scheduler = get_scheduler(
-                name="constant_with_warmup",
+            self.aux_scheduler = get_linear_schedule_with_warmup(
                 optimizer=self.aux_opt,
-                num_warmup_steps=200,
+                num_warmup_steps=0,
                 num_training_steps=num_steps,
             )
         else:
@@ -468,18 +468,6 @@ class FishLeg(Optimizer):
     ):
         aux, check, check2 = 0, 0, 0
         for t in range(num_samples):
-            data = next(iter(self.aux_dataloader))
-            data = self._prepare_input(data)
-            self.zero_grad()
-            self.nll(self.model, data).backward()
-            self._store_u(new=True)
-
-            data = next(iter(self.aux_dataloader))
-            data = self._prepare_input(data)
-            self.zero_grad()
-            self.nll(self.model, data).backward()
-            self._store_u(alpha=-1.0)
-
             info = self.update_aux()
             info = [e.detach().cpu().numpy() for e in info]
             
@@ -495,8 +483,14 @@ class FishLeg(Optimizer):
                         "iter:{:d}, \taux:{:.2f} check:{:.2f} check2:{:.2f} \tauxloss:{:.2f} \tcheck:{:.2f} \tcheck2:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
                                     t, aux, check, check2, *info
                                 ))
-                if t > 0: aux = 0
-        
+                if t > 0: aux, check, check2 = 0, 0, 0
+            with open(
+                    os.path.join(self.output_dir, "aux_evolve.csv"), "a", newline=""
+            ) as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow([
+                    -t, self.aux_opt.param_groups[0]["lr"], *info
+                                ])
     def pretrain_fish(
         self,
         dataloader: torch.utils.data.DataLoader,
@@ -514,22 +508,24 @@ class FishLeg(Optimizer):
     ) -> List:
 
         aux, checks, checks2 = 0, 0, 0
-        
         aux_file = os.path.join(self.output_dir, "pretrain.csv")
-        weight_file = os.path.join(self.output_dir, "weight.csv")
-        eigen_file = os.path.join(self.output_dir, "eigen.csv")
 
         if os.path.exists(aux_file):
             os.remove(aux_file)
 
-        with open(aux_file, "a", newline="") as csv_file:
-            writer = csv.writer(csv_file)
-            names = ["iter", "lr", "auxloss", "check", "check2", "linear", "quad", "reg", "g2"]
-            '''
-            for group in self.param_groups:
-                names.append(group["name"])
-            '''
-            writer.writerow(names)
+        if analyze: 
+            weight_file = os.path.join(self.output_dir, "weight.csv")
+            eigen_file = os.path.join(self.output_dir, "eigen.csv")
+
+
+            with open(aux_file, "a", newline="") as csv_file:
+                writer = csv.writer(csv_file)
+                names = ["iter", "lr", "auxloss", "check", "check2", "linear", "quad", "reg", "g2"]
+                '''
+                for group in self.param_groups:
+                    names.append(group["name"])
+                '''
+                writer.writerow(names)
 
             
         for pre in range(iterations):
@@ -581,10 +577,10 @@ class FishLeg(Optimizer):
                     print(
                         "iter:{:d},auxlr:{:.5f} \tBATCH auxloss:{:.2f} \tcheck:{:.2f} \tcheck2:{:.2f} \tauxloss:{:.2f} \tcheck:{:.2f} \tcheck2:{:.2f} \tlinear:{:.2f} \tquad:{:.2f} \treg:{:.2f} \tg2:{:.2f}".format(
                                     pre, self.aux_opt.param_groups[0]['lr'], aux, checks, checks2, *infos
-                                )
                             )
+                        )
                     aux, checks, checks2 = 0, 0, 0
-
+        
         return
 
     def _store_u(
@@ -654,14 +650,15 @@ class FishLeg(Optimizer):
             batch_size = samples[0].shape[0]
         else:
             batch_size = samples["input_ids"].shape[0]
-
+        
+        batch_size = 1
         reg_term = 0.
         quad_term = 0.
         linear_term = 0.
         align_term = 0.
         utu_term = 0.
         
-        
+        ''' 
         sample_grads = [torch.autograd.grad(
                     self.nll(
                         self.model, 
@@ -672,19 +669,27 @@ class FishLeg(Optimizer):
                 ) for k in range(batch_size)]
         sample_grads = zip(*sample_grads)
         gs = [torch.stack(shards) for shards in sample_grads]
-
-        for j in range(self.u_batch):
-            
-            batch = next(iter(self.aux_dataloader))
-            batch = self._prepare_input(batch)
-            us = torch.autograd.grad(
-                    self.nll(self.model, batch),
+        '''
+        loss = self.nll(self.model, samples) 
+        sample_grads = [torch.autograd.grad(
+                    loss,
                     [para for group in self.param_groups for para in group["params"]],
                     allow_unused=True,
-                )
-            if self.random:
-                us = [torch.randn_like(grad) * torch.std(grad) for grad in us]
-
+                )]
+        sample_grads = zip(*sample_grads)
+        gs = [torch.stack(shards) for shards in sample_grads]
+        
+        for j in range(self.u_batch):
+            if not self.random:
+                batch = next(iter(self.aux_dataloader))
+                batch = self._prepare_input(batch)
+                us = torch.autograd.grad(
+                        self.nll(self.model, batch),
+                        [para for group in self.param_groups for para in group["params"]],
+                        allow_unused=True,
+                    )
+            else:
+                us = [torch.randn_like(grad[0]) * torch.std(grad) for grad in gs]
             with torch.no_grad():
                 u2 = 0.0
                 for u,p in zip(
@@ -699,21 +704,33 @@ class FishLeg(Optimizer):
             align = [0] * batch_size
             p_idx = 0
             for i, group in enumerate(self.param_groups):
+                name = group["name"]
                 num = len(group["order"])
                 if self.normalization:
                     u_normalized = [u/u_norm for u in us[p_idx:p_idx+num]]
                 else:
                     u_normalized = us[p_idx:p_idx+num]
                 masks = [~(p.data == 0) for p in group["params"]]
-                u_normalized = [u * ~(p.data==0) for u, p in zip(u_normalized, masks)]
+                u_normalized = [u * mask for u, mask in zip(u_normalized, masks)]
                 qu = group["Qv"](u_normalized)
 
                 if j == self.u_batch - 1: group["v"] = qu
-                for mask, u, dqu in zip(
-                       masks, u_normalized, qu
+                for p, mask, u, dqu, para_name in zip(
+                       group["params"], masks, u_normalized, qu, group["order"]
                     ):
                         linear_term = linear_term + torch.sum(u * dqu)
-                        reg_term = reg_term + self.damping * torch.sum(dqu * dqu * mask)
+                        reg_term = reg_term + self.damping * torch.sum(dqu * dqu)
+                       
+                        para_name = name + '.' + para_name
+                        module_name = '.'.join(para_name.split('.')[:-1])
+                        para_name = para_name.split('.')[-1]
+                        
+                        plus_module = recursive_getattr(self.plus, module_name)
+                        minus_module = recursive_getattr(self.minus, module_name)
+                        plus_module._parameters[para_name] = p.data + self.eps * dqu
+                        minus_module._parameters[para_name] = p.data - self.eps * dqu
+                        #self.plus._modules[name]._parameters[para_name] = p.data + self.eps * dqu * mask
+                        #self.minus._modules[name]._parameters[para_name] = p.data - self.eps * dqu * mask
                 
                 for k in range(batch_size):
                     gg = [g[k] for g in gs[p_idx:p_idx+num]]
@@ -725,7 +742,11 @@ class FishLeg(Optimizer):
 
                 p_idx = p_idx + num
 
-            quad_term = quad_term + sum([q**2 for q in quad])
+            #quad_term = quad_term + sum([q**2 for q in quad])
+            h_plus = self.nll(self.plus, samples)
+            h_minus = self.nll(self.minus, samples)
+
+            quad_term += (h_plus + h_minus - 2*loss.detach())/(self.eps**2)
             with torch.no_grad():
                 align_term = align_term +sum([q*a for q,a in zip(quad, align)])
                 if j == self.u_batch - 1:
@@ -745,7 +766,7 @@ class FishLeg(Optimizer):
         linear_term = linear_term / self.u_batch
         reg_term = reg_term / self.u_batch
         utu_term = utu_term / self.u_batch
-        quad_term = quad_term / (self.u_batch * batch_size)
+        quad_term = quad_term / self.u_batch #* batch_size)
         align_term = align_term / (self.u_batch * batch_size)
         
         # Loss = 1/B sum( u^TQgi gi^TQu) + gamma*u^TQQu - 2u^TQu
@@ -766,8 +787,12 @@ class FishLeg(Optimizer):
                     if self.normalization: u = u/u_norm
                     qfumuN = qfumuN + torch.sum(torch.square(qfu-u*mask))
                     qfuN = qfuN + torch.sum(torch.square(qfu))
-                p_idx = p_idx + num 
-            check2 = torch.sqrt(qfumuN) / (torch.sqrt(qfuN) + 1 if self.normalization else u_norm)
+                p_idx = p_idx + num
+
+            if self.normalization:
+                check2 = torch.sqrt(qfumuN) / (torch.sqrt(qfuN) + 1)
+            else:
+                check2 = torch.sqrt(qfumuN) / (torch.sqrt(qfuN) + u_norm) 
         
         aux_loss = 0.5*(reg_term + quad_term) - linear_term
         
@@ -811,18 +836,26 @@ class FishLeg(Optimizer):
                                     self.step_t,  self.param_groups[0]['lr'], self.aux_opt.param_groups[0]["lr"], batch_aux, batch_check, batch_check2, *info
                                 )
                             )
-                        with open(
+                    with open(
                             os.path.join(self.output_dir, "aux_evolve.csv"), "a", newline=""
-                        ) as csv_file:
-                            writer = csv.writer(csv_file)
-                            writer.writerow([
-                                    self.step_t, self.aux_opt.param_groups[0]["lr"], batch_aux, batch_check, batch_check2, *info
+                    ) as csv_file:
+                        writer = csv.writer(csv_file)
+                        writer.writerow([
+                                    self.step_t, self.aux_opt.param_groups[0]["lr"], *info
                                 ])
                 self.updated = True
         elif self.update_aux_every < 0:
             self._store_u(new=True)
             for _ in range(-self.update_aux_every):
-                self.update_aux()
+                info = self.update_aux()
+                info = [e.detach().cpu().numpy() for e in info]
+                with open(
+                            os.path.join(self.output_dir, "aux_evolve.csv"), "a", newline=""
+                ) as csv_file:
+                    writer = csv.writer(csv_file)
+                    writer.writerow([
+                                    self.step_t, self.aux_opt.param_groups[0]["lr"], *info
+                                ])
             self.updated = True
 
         self.step_t += 1
@@ -831,7 +864,7 @@ class FishLeg(Optimizer):
             name = group["name"]
             with torch.no_grad():
                 nat_grad = group["Qv"](
-                        [p.grad.data for p in group["params"]]
+                        [p.grad.data * ~(p.data==0) for p in group["params"]]
                     )
                 
                 if self.fine_tune:
@@ -846,9 +879,8 @@ class FishLeg(Optimizer):
                     for p, d_p, gbar in zip(
                         group["params"], nat_grad, group["gradbar"]
                     ):
-                        mask = ~(p.data == 0)
-                        gbar.copy_((self.beta * gbar + (1.0 - self.beta) * d_p) * mask)
-                        delta = gbar.add(p * mask, alpha=self.weight_decay)
+                        gbar.copy_(self.beta * gbar + (1.0 - self.beta) * d_p)
+                        delta = gbar.add(p, alpha=self.weight_decay)
                         p.add_(delta, alpha=-group['lr'])
         if self.scheduler is not None:
             self.scheduler.step()
