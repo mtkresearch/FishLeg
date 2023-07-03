@@ -184,7 +184,8 @@ class FishLeg(Optimizer):
         self.aux_dataloader = aux_dataloader
 
         class aux_loss(nn.Module):
-            def __init__(self, model, eps, gamma):
+            def __init__(self, model, eps, gamma, *args: Any, **kwargs: Any) -> None:
+                super(aux_loss, self).__init__(*args, **kwargs)
                 self.plus = copy.deepcopy(model)
                 self.minus = copy.deepcopy(model)
                 self.eps = eps
@@ -235,7 +236,7 @@ class FishLeg(Optimizer):
             new_grad_input = []
             for group in self.param_groups:
                 num = len(group['order'])
-                new_grads = group['Qv'](grad_input[p_idx : p_idx+num])
+                new_grads = group['Qv'](grad_input[0][p_idx : p_idx+num])
                 p_idx += num
                 new_grad_input.extend(new_grads)
             return tuple(new_grad_input)
