@@ -182,8 +182,43 @@ class FishLeg(Optimizer):
         self.draw = draw
         self.nll = nll
         self.aux_dataloader = aux_dataloader
-        
-        self.plus, self.minus = copy.deepcopy(model), copy.deepcopy(model)
+
+        class aux_loss(nn.Module):
+            def __init__(self, model, eps, gamma):
+                self.plus = copy.deepcopy(model)
+                self.minus = copy.deepcopy(model)
+                self.eps = eps
+                self.gamma = gamma
+
+            def forward(self, vs, us, samples, model):
+                #### quad term by antithetic
+                linear, reg = 0
+                p_idx = 0
+                for group in model:
+                    num = len(group["order"])
+                    u = us[p_idx: p_idx + num]
+                    v = vs[p_idx: p_idx + num]
+                    for i,para_name, p in enumerate(zip(group['order'],group['params'])):
+                        para_name = group['name'] + '.' + para_name
+                        module_name = '.'.join(para_name.split('.')[:-1])
+                        param_name = para_name.split('.')[-1]
+
+                        plus_module = recursive_getattr(self.plus, module_name)
+                        minus_module = recursive_getattr(self.minus, module_name)
+                        plus_module._parameters[param_name] = p.data + self.eps * v[i]
+                        minus_module._parameters[param_name] = p.data - self.eps * v[i]
+
+                        linear = linear + torch.sum(u[i] * v[i])
+                        reg = reg + torch.sum(v[i] * v[i])
+                    p_idx += num
+                
+                quad = self.nll(self.plus, samples) + \
+                        self.nll(self.minus, samples) - \
+                        2*self.nll(model, samples).detach()
+                quad = quad / (self.eps ** 2)
+                return 0.5*(quad + self.gamma * reg) - linear, quad, linear, reg
+
+        self.aux_loss = aux_loss(model, self.eps, self.damping)
         
         self.model, param_groups = self.init_model_aux(
                             model, 
@@ -193,6 +228,19 @@ class FishLeg(Optimizer):
                         )
         defaults = dict(aux_lr=aux_lr, lr=lr)
         super(FishLeg, self).__init__(param_groups, defaults)
+
+        @torch.no_grad()
+        def _precondition(module, grad_input, grad_output):
+            p_idx = 0
+            new_grad_input = []
+            for group in self.param_groups:
+                num = len(group['order'])
+                new_grads = group['Qv'](grad_input[p_idx : p_idx+num])
+                p_idx += num
+                new_grad_input.extend(new_grads)
+            return tuple(new_grad_input)
+
+        self.aux_loss.register_full_backward_hook(_precondition)
 
         if self.warmup > 0:
             self.warmup_aux(warmup_data, warmup_loss, scale=scale)
@@ -652,6 +700,7 @@ class FishLeg(Optimizer):
             batch_size = samples["input_ids"].shape[0]
         
         batch_size = 1
+        aux_loss = 0.
         reg_term = 0.
         quad_term = 0.
         linear_term = 0.
@@ -690,6 +739,7 @@ class FishLeg(Optimizer):
                     )
             else:
                 us = [torch.randn_like(grad[0]) * torch.std(grad) for grad in gs]
+
             with torch.no_grad():
                 u2 = 0.0
                 for u,p in zip(
@@ -703,8 +753,9 @@ class FishLeg(Optimizer):
             quad = [0] * batch_size
             align = [0] * batch_size
             p_idx = 0
+
+            vs, new_us = [],[]
             for i, group in enumerate(self.param_groups):
-                name = group["name"]
                 num = len(group["order"])
                 if self.normalization:
                     u_normalized = [u/u_norm for u in us[p_idx:p_idx+num]]
@@ -714,23 +765,10 @@ class FishLeg(Optimizer):
                 u_normalized = [u * mask for u, mask in zip(u_normalized, masks)]
                 qu = group["Qv"](u_normalized)
 
+                vs.extend(qu)
+                new_us.extend(u_normalized)
+
                 if j == self.u_batch - 1: group["v"] = qu
-                for p, mask, u, dqu, para_name in zip(
-                       group["params"], masks, u_normalized, qu, group["order"]
-                    ):
-                        linear_term = linear_term + torch.sum(u * dqu)
-                        reg_term = reg_term + self.damping * torch.sum(dqu * dqu)
-                       
-                        para_name = name + '.' + para_name
-                        module_name = '.'.join(para_name.split('.')[:-1])
-                        para_name = para_name.split('.')[-1]
-                        
-                        plus_module = recursive_getattr(self.plus, module_name)
-                        minus_module = recursive_getattr(self.minus, module_name)
-                        plus_module._parameters[para_name] = p.data + self.eps * dqu
-                        minus_module._parameters[para_name] = p.data - self.eps * dqu
-                        #self.plus._modules[name]._parameters[para_name] = p.data + self.eps * dqu * mask
-                        #self.minus._modules[name]._parameters[para_name] = p.data - self.eps * dqu * mask
                 
                 for k in range(batch_size):
                     gg = [g[k] for g in gs[p_idx:p_idx+num]]
@@ -743,10 +781,7 @@ class FishLeg(Optimizer):
                 p_idx = p_idx + num
 
             #quad_term = quad_term + sum([q**2 for q in quad])
-            h_plus = self.nll(self.plus, samples)
-            h_minus = self.nll(self.minus, samples)
 
-            quad_term += (h_plus + h_minus - 2*loss.detach())/(self.eps**2)
             with torch.no_grad():
                 align_term = align_term +sum([q*a for q,a in zip(quad, align)])
                 if j == self.u_batch - 1:
@@ -762,7 +797,15 @@ class FishLeg(Optimizer):
                                 if k==0: ggqu.copy_(quad[k]/batch_size * g * mask + self.damping * dqu)
                                 else: ggqu.add_(quad[k]/batch_size * g * mask)
                         p_idx = p_idx + num
-                       
+
+
+            auxloss, quad, linear, reg = self.aux_loss(vs, new_us, samples, self.model)
+            aux_loss += auxloss
+            quad_term += quad
+            linear_term += linear
+            reg_term += reg
+
+        aux_loss += aux_loss / self.u_batch
         linear_term = linear_term / self.u_batch
         reg_term = reg_term / self.u_batch
         utu_term = utu_term / self.u_batch
@@ -794,7 +837,7 @@ class FishLeg(Optimizer):
             else:
                 check2 = torch.sqrt(qfumuN) / (torch.sqrt(qfuN) + u_norm) 
         
-        aux_loss = 0.5*(reg_term + quad_term) - linear_term
+        #aux_loss = 0.5*(reg_term + quad_term) - linear_term
         
         if train:
             aux_loss.backward()
