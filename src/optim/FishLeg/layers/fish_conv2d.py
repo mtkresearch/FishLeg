@@ -116,7 +116,7 @@ class FishConv2d(nn.Conv2d, FishModule):
         R = self.fishleg_aux["R"]
         A = self.fishleg_aux["A"]
 
-        diagA = torch.reshape(A.T, (-1))
+        diagA = torch.square(torch.reshape(A.T, (-1)))
         diag = diagA * torch.kron(
             torch.sum(torch.square(L), dim=0), torch.sum(torch.square(R), dim=0)
         )
