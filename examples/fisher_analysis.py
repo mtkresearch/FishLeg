@@ -16,7 +16,7 @@ from optim.FishLeg import FishLeg, FISH_LIKELIHOODS, FishLinear
 np.random.seed(1)
 torch.random.manual_seed(1)
 
-N = 100
+N = 5
 gamma = 0.001
 
 A = torch.randn((N, N))
@@ -24,16 +24,16 @@ A = torch.randn((N, N))
 U, _ = torch.linalg.qr(A)
 
 lambda_i = []
-for i in range(1, 101):
+for i in range(1, N+1):
     lambda_i.append(1 / (i**2))
 
 Lambda = torch.diag(torch.Tensor(lambda_i))
 
-F = U.T @ Lambda @ U
+F = U.T @ Lambda @ U 
 
 teacher_model = nn.Linear(N, 1)
 
-targets = torch.svd(1 / (F + gamma))[1]
+targets = torch.svd(torch.inverse(F + gamma*torch.eye(N)))[1]   
 
 
 def dataloader(batch_size: int = 1):
@@ -65,15 +65,20 @@ student_model.weight.data = teacher_model.weight.data
 
 likelihood = FISH_LIKELIHOODS["gaussian"](sigma=1.0)
 
+lr_SGD = 1e-4
+
+lr_fl_inf = 0#gamma*lr_SGD
+lr_fl_zero = 0#gamma*lr_SGD
+warmup_lr_K = 100
 opt = FishLeg(
     student_model,
     loader,
     likelihood,
-    lr=0.0001,
+    lr=lr_fl_zero,
     beta=0.7,
     weight_decay=1e-5,
     aux_lr=0.01,
-    aux_betas=(0.9, 0.9),
+    aux_betas=(0.9, 0.99),
     aux_eps=1e-8,
     warmup_steps=0,
     damping=gamma,
@@ -111,25 +116,23 @@ fig, ax = plt.subplots(1, 1)
 ax.plot(sorted(final_diag), sorted(target_diag), ".")
 ax.plot(sorted(target_diag), sorted(target_diag), ls="--", color="k")
 
+k = 0
 for epoch in range(1, 101):
     with tqdm(loader, unit="batch") as tepoch:
         running_loss = 0
         tepoch.set_description(f"Epoch {epoch}")
         for batch in range(100):
+            for g in opt.param_groups:
+                g['lr'] = min(lr_fl_zero + (lr_fl_inf - lr_fl_zero)*k/warmup_lr_K , lr_fl_inf)
             opt.zero_grad()
-
             x, y = next(loader)
-
             pred_y = student_model(x.T)
-
             loss = likelihood(pred_y, y)
-
             loss.backward()
-
             opt.step()
-
+            
             running_loss += loss.item()
-
+            k += 1
             if batch % 50 == 0:
                 # Write out the losses per epoch
                 writer.add_scalar(
