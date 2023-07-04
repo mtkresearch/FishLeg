@@ -40,7 +40,7 @@ def dataloader(batch_size: int = 1):
     while True:
         z = torch.Tensor(np.random.normal(0, 1, size=(batch_size, N))).T
         x = torch.matmul(torch.matmul(U, torch.sqrt(Lambda)), z)
-        yield x, teacher_model(x.T).T
+        yield x.T, teacher_model(x.T)
 
 
 for K in [1, 5, 10, 50, 100, 500, 1000, 5000, 10000, 100000]:
@@ -67,8 +67,8 @@ likelihood = FISH_LIKELIHOODS["gaussian"](sigma=1.0)
 
 lr_SGD = 1e-4
 
-lr_fl_inf = 0#gamma*lr_SGD
-lr_fl_zero = 0#gamma*lr_SGD
+lr_fl_inf = gamma*lr_SGD
+lr_fl_zero = gamma*lr_SGD
 warmup_lr_K = 100
 opt = FishLeg(
     student_model,
