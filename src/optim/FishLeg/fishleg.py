@@ -290,8 +290,14 @@ class FishLeg(Optimizer):
                 count = 0
                 for module in self.model.modules():
                     if isinstance(module, FishModule):
-                        v_adj_new.append(module.Qv(v_adj[count])/v_norm)
-                        count += 1
+                        v_adj_group = []
+                        for name, param in module.named_parameters():
+                            if "fishleg_aux" not in name:
+                                v_adj_group.append(v_adj[count])
+                                count += 1
+                        v_adj_new_group = module.Qv(v_adj_group)
+                        for v in v_adj_new_group:
+                            v_adj_new.append(v/v_norm)
                 v_adj = v_adj_new
 
         for v_a, v in zip(v_adj, v_model):
