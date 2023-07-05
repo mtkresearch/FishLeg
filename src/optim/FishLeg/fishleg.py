@@ -191,15 +191,16 @@ class FishLeg(Optimizer):
                 self.eps = eps
                 self.gamma = gamma
 
-            def forward(self, vs, us, samples, model):
+            def forward(self, args, *vs):
                 #### quad term by antithetic
-                linear, reg = 0
+                us, samples, model, param_groups = args
+                linear, reg = 0,0
                 p_idx = 0
-                for group in model:
+                for group in param_groups:
                     num = len(group["order"])
                     u = us[p_idx: p_idx + num]
                     v = vs[p_idx: p_idx + num]
-                    for i,para_name, p in enumerate(zip(group['order'],group['params'])):
+                    for i, (para_name, p) in enumerate(zip(group['order'],group['params'])):
                         para_name = group['name'] + '.' + para_name
                         module_name = '.'.join(para_name.split('.')[:-1])
                         param_name = para_name.split('.')[-1]
@@ -213,13 +214,13 @@ class FishLeg(Optimizer):
                         reg = reg + torch.sum(v[i] * v[i])
                     p_idx += num
                 
-                quad = self.nll(self.plus, samples) + \
-                        self.nll(self.minus, samples) - \
-                        2*self.nll(model, samples).detach()
+                quad = nll(self.plus, samples) + \
+                        nll(self.minus, samples) - \
+                        2*nll(model, samples).detach()
                 quad = quad / (self.eps ** 2)
                 return 0.5*(quad + self.gamma * reg) - linear, quad, linear, reg
 
-        self.aux_loss = aux_loss(model, self.eps, self.damping)
+        self.auxiliary_loss = aux_loss(model, self.eps, self.damping)
         
         self.model, param_groups = self.init_model_aux(
                             model, 
@@ -232,16 +233,17 @@ class FishLeg(Optimizer):
 
         @torch.no_grad()
         def _precondition(module, grad_input, grad_output):
-            p_idx = 0
+            p_idx = 1
+            other_grads = grad_input[:1]
             new_grad_input = []
             for group in self.param_groups:
                 num = len(group['order'])
-                new_grads = group['Qv'](grad_input[0][p_idx : p_idx+num])
+                new_grads = group['Qv'](grad_input[p_idx : p_idx+num])
                 p_idx += num
                 new_grad_input.extend(new_grads)
-            return tuple(new_grad_input)
+            return other_grads + tuple(new_grad_input)
 
-        self.aux_loss.register_full_backward_hook(_precondition)
+        self.auxiliary_loss.register_full_backward_hook(_precondition)
 
         if self.warmup > 0:
             self.warmup_aux(warmup_data, warmup_loss, scale=scale)
@@ -765,7 +767,7 @@ class FishLeg(Optimizer):
                 masks = [~(p.data == 0) for p in group["params"]]
                 u_normalized = [u * mask for u, mask in zip(u_normalized, masks)]
                 qu = group["Qv"](u_normalized)
-
+                
                 vs.extend(qu)
                 new_us.extend(u_normalized)
 
@@ -798,15 +800,14 @@ class FishLeg(Optimizer):
                                 if k==0: ggqu.copy_(quad[k]/batch_size * g * mask + self.damping * dqu)
                                 else: ggqu.add_(quad[k]/batch_size * g * mask)
                         p_idx = p_idx + num
-
-
-            auxloss, quad, linear, reg = self.aux_loss(vs, new_us, samples, self.model)
+            
+            auxloss, quad, linear, reg = self.auxiliary_loss((new_us, samples, self.model, self.param_groups), *vs)
             aux_loss += auxloss
             quad_term += quad
             linear_term += linear
             reg_term += reg
 
-        aux_loss += aux_loss / self.u_batch
+        aux_loss = aux_loss / self.u_batch
         linear_term = linear_term / self.u_batch
         reg_term = reg_term / self.u_batch
         utu_term = utu_term / self.u_batch
