@@ -18,9 +18,9 @@ class FishBatchNorm2d(nn.BatchNorm2d, FishModule):
         device=None,
         dtype=None,
     ) -> None:
-        super().__init__(
+        super(FishBatchNorm2d, self).__init__(
             num_features, eps, momentum, affine, track_running_stats, device, dtype
-        )()
+        )
         self._layer_name = "BatchNorm2d"
         if affine:
             self.fishleg_aux = ParameterDict(
