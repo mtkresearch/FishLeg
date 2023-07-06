@@ -96,7 +96,6 @@ class FishLeg(Optimizer):
         aux_eps: float = 1e-8,
         damping: float = 5e-1,
         update_aux_every: int = 10,
-        warmup_steps: int = 0,
         method: str = "rank-1",
         method_kwargs: Dict = {},
         precondition_aux: bool = True,
@@ -116,7 +115,6 @@ class FishLeg(Optimizer):
             aux_lr=aux_lr,
             damping=damping,
             update_aux_every=update_aux_every,
-            warmup_steps=warmup_steps,
             method=method,
             method_kwargs=method_kwargs,
             precondition_aux=precondition_aux
@@ -142,9 +140,6 @@ class FishLeg(Optimizer):
             eps=aux_eps,
             weight_decay=0,  # weight_decay need to be fixed to zero
         )
-
-        if warmup_steps > 0:
-            self.warmup_aux(num_steps=warmup_steps)
 
     def __setstate__(self, state):
         super().__setstate__(state)
@@ -177,8 +172,8 @@ class FishLeg(Optimizer):
         method_kwargs = group["method_kwargs"]
         precondition_aux = group["precondition_aux"]
 
+        pred_y = self.model(data_x)
         with torch.no_grad():
-            pred_y = self.model(data_x)
             samples_y = self.likelihood.draw(pred_y)
 
         g2 = 0.0
