@@ -188,10 +188,8 @@ class FishLeg(Optimizer):
         for module in self.model.modules():
             if isinstance(module, FishModule):
                 layer_grads = []
-                for _, param in module.named_parameters():
-                    if not isinstance(param, FishAuxParameter):
-                        layer_grads.append(param.grad.data / g_norm)
-
+                for param in module.not_aux_parameters():
+                    layer_grads.append(param.grad.data / g_norm)
                 v_layer = module.Qv(layer_grads)
 
                 for v in v_layer:
@@ -209,10 +207,9 @@ class FishLeg(Optimizer):
                 p_idx = 0
                 for module in self.model.modules():
                     if isinstance(module, FishModule):
-                        for _, param in module.named_parameters():
-                            if not isinstance(param, FishAuxParameter):
-                                param.data += eps * nat_grads[p_idx].detach() / norm
-                                p_idx += 1
+                        for param in module.not_aux_parameters():
+                            param.data += eps * nat_grads[p_idx].detach() / norm
+                            p_idx += 1
 
             # Add to gradients
             _augment_params_by(eps, v_model, norm=v_norm)
@@ -257,12 +254,11 @@ class FishLeg(Optimizer):
             g_dot_w = 0
             for module in self.model.modules():
                 if isinstance(module, FishModule):
-                    for _, param in module.named_parameters():
-                        if not isinstance(param, FishAuxParameter):
-                            nat_grad = v_model[p_idx]
-                            sample_grad = gs[p_idx]
-                            g_dot_w += torch.sum(nat_grad.detach() * sample_grad)
-                            p_idx += 1
+                    for param in module.not_aux_parameters():
+                        nat_grad = v_model[p_idx]
+                        sample_grad = gs[p_idx]
+                        g_dot_w += torch.sum(nat_grad.detach() * sample_grad)
+                        p_idx += 1
                                             
             Fv_norm = list(map(lambda a: g_dot_w * a / v_norm, v_model))
        
@@ -288,11 +284,10 @@ class FishLeg(Optimizer):
                 for module in self.model.modules():
                     if isinstance(module, FishModule):
                         v_adj_group = []
-                        for _, param in module.named_parameters():
-                            if not isinstance(param, FishAuxParameter):
-                                v_adj_group.append(v_adj[count])
-                                aux_loss += torch.dot(v_adj[count].reshape(-1), v_model[count].reshape(-1))
-                                count += 1
+                        for param in module.not_aux_parameters():
+                            v_adj_group.append(v_adj[count])
+                            aux_loss += torch.dot(v_adj[count].reshape(-1), v_model[count].reshape(-1))
+                            count += 1
                         v_adj_new_group = module.Qv(v_adj_group)
                         for v in v_adj_new_group:
                             v_adj_new.append(v/v_norm)
@@ -319,13 +314,6 @@ class FishLeg(Optimizer):
                 group["lr"],
                 self.state[group["params"][-1]]["step"],
             )
-        # aux_grads = torch.autograd.grad(
-        #     outputs=surrogate_loss,
-        #     inputs=self.aux_opt.param_groups[0]["params"],
-        #     allow_unused=True,
-        # )
-        # for n, a_p in enumerate(self.aux_opt.param_groups[0]["params"]):
-        #     a_p.grad = aux_grads[n]
 
         self.aux_opt.step()
         return surrogate_loss.item()
@@ -393,9 +381,8 @@ class FishLeg(Optimizer):
             for module in self.model.modules():
                 if isinstance(module, FishModule):
                     layer_grads = []
-                    for _, param in module.named_parameters():
-                        if not isinstance(param, FishAuxParameter):
-                            layer_grads.append(param.grad.data)
+                    for param in module.not_aux_parameters():
+                        layer_grads.append(param.grad.data)
 
                     nat_grads = module.Qv(layer_grads)
 
