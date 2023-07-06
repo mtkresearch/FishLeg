@@ -27,8 +27,8 @@ torch.manual_seed(seed)
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = "cpu"
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = "cpu"
 
 dataset = read_data_sets("MNIST", "../data/", if_autoencoder=True)
 
@@ -106,7 +106,6 @@ opt = FishLeg(
     method="rank-1",
     method_kwargs={},
     precondition_aux=True,
-
 )
 
 epochs = 100
