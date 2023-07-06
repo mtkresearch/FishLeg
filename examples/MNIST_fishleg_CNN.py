@@ -28,7 +28,7 @@ torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# device = "cpu"
+device = "cpu"
 
 dataset = read_data_sets("MNIST", "../data/", if_autoencoder=False, reshape=False)
 
@@ -107,7 +107,7 @@ opt = FishLeg(
     damping=damping,
     update_aux_every=update_aux_every,
     writer=writer,
-    method="rank-1",
+    method="antithetic",
     method_kwargs={},
     precondition_aux=True,
 )
