@@ -126,7 +126,7 @@ for epoch in range(1, 101):
                 g['lr'] = min(lr_fl_zero + (lr_fl_inf - lr_fl_zero)*k/warmup_lr_K , lr_fl_inf)
             opt.zero_grad()
             x, y = next(loader)
-            pred_y = student_model(x.T)
+            pred_y = student_model(x)
             loss = likelihood(pred_y, y)
             loss.backward()
             opt.step()
