@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch import Tensor
-from torch.nn import ParameterDict, Parameter
+from torch.nn import ParameterDict
 
-from .fish_base import FishModule
+from .fish_base import FishModule, FishAuxParameter
 from .utils import get_zero_grad_hook  # TODO: Is this in torch? Let's upgrade?
 from typing import Tuple
 
@@ -31,9 +31,9 @@ class FishLinear(nn.Linear, FishModule):
         self.init_scale = init_scale
         self.fishleg_aux = ParameterDict(
             {
-                "L": Parameter(torch.eye(in_features + 1)),
-                "R": Parameter(torch.eye(out_features)),
-                "A": Parameter(
+                "L": FishAuxParameter(torch.eye(in_features + 1)),
+                "R": FishAuxParameter(torch.eye(out_features)),
+                "A": FishAuxParameter(
                     torch.ones(out_features, in_features + 1).mul_(np.sqrt(init_scale))
                 ),
             }

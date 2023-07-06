@@ -1,10 +1,10 @@
 from typing import Tuple
 import torch
 import numpy as np
-from torch.nn import ParameterDict, Parameter
+from torch.nn import ParameterDict
 
 from transformers.models.bert.modeling_bert import BertAttention
-from .fish_base import FishModule
+from .fish_base import FishModule, FishAuxParameter
 
 
 class FishBertAttention(BertAttention, FishModule):
@@ -20,35 +20,35 @@ class FishBertAttention(BertAttention, FishModule):
         self.all_head_size, self.hidden_size = self.self.key.weight.shape
         self.fishleg_aux = ParameterDict(
             {
-                "L": Parameter(torch.eye(self.hidden_size + 1)),
-                "R": Parameter(torch.eye(self.hidden_size + 1)),
-                "U": Parameter(torch.eye(self.hidden_size)),
-                "A": Parameter(torch.eye(self.hidden_size + 1)),
-                "B": Parameter(torch.eye(self.hidden_size + 1)),
-                "C": Parameter(torch.eye(self.hidden_size + 1)),
-                "D": Parameter(torch.eye(self.hidden_size)),
-                "K": Parameter(
+                "L": FishAuxParameter(torch.eye(self.hidden_size + 1)),
+                "R": FishAuxParameter(torch.eye(self.hidden_size + 1)),
+                "U": FishAuxParameter(torch.eye(self.hidden_size)),
+                "A": FishAuxParameter(torch.eye(self.hidden_size + 1)),
+                "B": FishAuxParameter(torch.eye(self.hidden_size + 1)),
+                "C": FishAuxParameter(torch.eye(self.hidden_size + 1)),
+                "D": FishAuxParameter(torch.eye(self.hidden_size)),
+                "K": FishAuxParameter(
                     torch.cat(
                         [torch.eye(self.hidden_size), torch.zeros(1, self.hidden_size)],
                         dim=0,
                     )
                 ),
-                "Q": Parameter(
+                "Q": FishAuxParameter(
                     torch.cat(
                         [torch.eye(self.hidden_size), torch.zeros(self.hidden_size, 1)],
                         dim=-1,
                     )
                 ),
-                "V": Parameter(
+                "V": FishAuxParameter(
                     torch.eye(self.hidden_size + 1),
                 ),
-                "O": Parameter(
+                "O": FishAuxParameter(
                     torch.eye(self.hidden_size),
                 ),
-                "Sk": Parameter(torch.ones(self.hidden_size + 1, self.hidden_size)),
-                "Sq": Parameter(torch.ones(self.hidden_size, self.hidden_size + 1)),
-                "Sv": Parameter(torch.ones(self.hidden_size, self.hidden_size + 1)),
-                "So": Parameter(torch.ones(self.hidden_size, self.hidden_size + 1)),
+                "Sk": FishAuxParameter(torch.ones(self.hidden_size + 1, self.hidden_size)),
+                "Sq": FishAuxParameter(torch.ones(self.hidden_size, self.hidden_size + 1)),
+                "Sv": FishAuxParameter(torch.ones(self.hidden_size, self.hidden_size + 1)),
+                "So": FishAuxParameter(torch.ones(self.hidden_size, self.hidden_size + 1)),
             }
         )
 

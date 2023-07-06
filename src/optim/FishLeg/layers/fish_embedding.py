@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch import Tensor
-from torch.nn import ParameterDict, Parameter
+from torch.nn import ParameterDict
 
-from .fish_base import FishModule
+from .fish_base import FishModule, FishAuxParameter
 from typing import Tuple, Optional
 
 
@@ -38,9 +38,9 @@ class FishEmbedding(nn.Embedding, FishModule):
         self._layer_name = "Embedding"
         self.fishleg_aux = ParameterDict(
             {
-                "L": Parameter(torch.eye(embedding_dim)),
-                "R": Parameter(torch.ones(num_embeddings)),
-                "A": Parameter(torch.ones(num_embeddings, embedding_dim)),
+                "L": FishAuxParameter(torch.eye(embedding_dim)),
+                "R": FishAuxParameter(torch.ones(num_embeddings)),
+                "A": FishAuxParameter(torch.ones(num_embeddings, embedding_dim)),
             }
         )
 

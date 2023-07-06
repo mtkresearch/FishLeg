@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch import Tensor
-from torch.nn import ParameterDict, Parameter
+from torch.nn import ParameterDict
 
-from .fish_base import FishModule
+from .fish_base import FishModule, FishAuxParameter
 from typing import Tuple, Optional
 
 
@@ -40,14 +40,14 @@ class FishConv2d(nn.Conv2d, FishModule):
         self.k_size = self.kernel_size[0] * self.kernel_size[1]
         self.fishleg_aux = ParameterDict(
             {
-                "L": Parameter(
+                "L": FishAuxParameter(
                     torch.eye(
                         int(bias) + int(self.in_channels_eff * self.k_size),
                         device=device,
                     )
                 ),
-                "R": Parameter(torch.eye(out_channels, device=device)),
-                "A": Parameter(
+                "R": FishAuxParameter(torch.eye(out_channels, device=device)),
+                "A": FishAuxParameter(
                     torch.ones(
                         out_channels,
                         int(bias) + int(self.in_channels_eff * self.k_size),

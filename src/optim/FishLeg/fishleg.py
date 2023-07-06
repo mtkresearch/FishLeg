@@ -121,13 +121,13 @@ class FishLeg(Optimizer):
         )
         params = [
             param
-            for name, param in model.named_parameters()
-            if "fishleg_aux" not in name
+            for _, param in model.named_parameters()
+            if not isinstance(param, FishAuxParameter)
         ]
         super(FishLeg, self).__init__(params, defaults)
 
         aux_params = [
-            param for name, param in model.named_parameters() if "fishleg_aux" in name
+            param for _, param in model.named_parameters() if isinstance(param, FishAuxParameter)
         ]
 
         if len(self.likelihood.get_parameters()) > 0:
@@ -188,8 +188,8 @@ class FishLeg(Optimizer):
         for module in self.model.modules():
             if isinstance(module, FishModule):
                 layer_grads = []
-                for name, param in module.named_parameters():
-                    if "fishleg_aux" not in name:
+                for _, param in module.named_parameters():
+                    if not isinstance(param, FishAuxParameter):
                         layer_grads.append(param.grad.data / g_norm)
 
                 v_layer = module.Qv(layer_grads)
@@ -209,8 +209,8 @@ class FishLeg(Optimizer):
                 p_idx = 0
                 for module in self.model.modules():
                     if isinstance(module, FishModule):
-                        for name, param in module.named_parameters():
-                            if "fishleg_aux" not in name:
+                        for _, param in module.named_parameters():
+                            if not isinstance(param, FishAuxParameter):
                                 param.data += eps * nat_grads[p_idx].detach() / norm
                                 p_idx += 1
 
@@ -257,8 +257,8 @@ class FishLeg(Optimizer):
             g_dot_w = 0
             for module in self.model.modules():
                 if isinstance(module, FishModule):
-                    for name, param in module.named_parameters():
-                        if "fishleg_aux" not in name:
+                    for _, param in module.named_parameters():
+                        if not isinstance(param, FishAuxParameter):
                             nat_grad = v_model[p_idx]
                             sample_grad = gs[p_idx]
                             g_dot_w += torch.sum(nat_grad.detach() * sample_grad)
@@ -288,8 +288,8 @@ class FishLeg(Optimizer):
                 for module in self.model.modules():
                     if isinstance(module, FishModule):
                         v_adj_group = []
-                        for name, param in module.named_parameters():
-                            if "fishleg_aux" not in name:
+                        for _, param in module.named_parameters():
+                            if not isinstance(param, FishAuxParameter):
                                 v_adj_group.append(v_adj[count])
                                 aux_loss += torch.dot(v_adj[count].reshape(-1), v_model[count].reshape(-1))
                                 count += 1
@@ -393,14 +393,14 @@ class FishLeg(Optimizer):
             for module in self.model.modules():
                 if isinstance(module, FishModule):
                     layer_grads = []
-                    for name, param in module.named_parameters():
-                        if "fishleg_aux" not in name:
+                    for _, param in module.named_parameters():
+                        if not isinstance(param, FishAuxParameter):
                             layer_grads.append(param.grad.data)
 
                     nat_grads = module.Qv(layer_grads)
 
-                    for n, (name, param) in enumerate(module.named_parameters()):
-                        if "fishleg_aux" not in name:
+                    for n, (_, param) in enumerate(module.named_parameters()):
+                        if not isinstance(param, FishAuxParameter):
                             nat_grad = nat_grads[n]
                             exp_avg = exp_avgs[p_idx]
                             state_steps[p_idx] += 1
@@ -418,8 +418,8 @@ class FishLeg(Optimizer):
                 elif not isinstance(module, nn.Sequential) and not isinstance(
                     module, nn.ParameterDict
                 ):
-                    for n, (name, param) in enumerate(module.named_parameters()):
-                        if "fishleg_aux" not in name:
+                    for n, (_, param) in enumerate(module.named_parameters()):
+                        if not isinstance(param, FishAuxParameter):
                             grad = grads[p_idx]
                             exp_avg = exp_avgs[p_idx]
                             state_steps[p_idx] += 1

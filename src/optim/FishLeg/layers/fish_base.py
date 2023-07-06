@@ -1,11 +1,13 @@
 import torch.nn as nn
 from torch import Tensor
-from torch.nn import ParameterDict
+from torch.nn import ParameterDict, Parameter
 
 from typing import Any, List, Dict, Tuple
 
 from abc import abstractmethod
 
+class FishAuxParameter(Parameter):
+    pass
 
 class FishModule(nn.Module):
     """
