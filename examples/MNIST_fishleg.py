@@ -27,7 +27,8 @@ torch.manual_seed(seed)
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = "cpu"
 
 dataset = read_data_sets("MNIST", "../data/", if_autoencoder=True)
 
@@ -74,7 +75,7 @@ aux_lr = 1e-4
 aux_eps = 1e-8
 scale = 1
 damping = 0.5
-update_aux_every = 10
+update_aux_every = 3
 
 initialization = "normal"
 normalization = True
@@ -100,10 +101,12 @@ opt = FishLeg(
     aux_betas=(0.9, 0.999),
     aux_eps=aux_eps,
     damping=damping,
-    warmup_steps=1000,
     update_aux_every=update_aux_every,
-    device=device,
     writer=writer,
+    method="rank-1",
+    method_kwargs={},
+    precondition_aux=True,
+
 )
 
 epochs = 100
