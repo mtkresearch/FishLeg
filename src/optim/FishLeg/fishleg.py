@@ -273,12 +273,14 @@ class FishLeg(Optimizer):
 
         v_adj = list(
             map(
-                lambda Fv, p: Fv / v_norm - (p.grad.data / g_norm) / v_norm**2,
+                lambda Fv, v, p: (Fv + float(damping)*v.detach()/v_norm) / v_norm - (p.grad.data / g_norm) / v_norm**2,
                 Fv_norm,
+                v_model,
                 group["params"],
             )
         )
 
+        aux_loss = 0
         if precondition_aux:
             with torch.no_grad():
                 v_adj_new = []
@@ -289,6 +291,7 @@ class FishLeg(Optimizer):
                         for name, param in module.named_parameters():
                             if "fishleg_aux" not in name:
                                 v_adj_group.append(v_adj[count])
+                                aux_loss += torch.dot(v_adj[count].reshape(-1), v_model[count].reshape(-1))
                                 count += 1
                         v_adj_new_group = module.Qv(v_adj_group)
                         for v in v_adj_new_group:
@@ -298,15 +301,16 @@ class FishLeg(Optimizer):
         for v_a, v in zip(v_adj, v_model):
             surrogate_loss += torch.dot(v_a.reshape(-1), v.reshape(-1))
 
-        if damping:
-            for v in v_model:
-                surrogate_loss += torch.dot(v.detach().reshape(-1), v.reshape(-1)) * damping / (v_norm**2)
-
         surrogate_loss.backward()
 
         if self.writer:
             self.writer.add_scalar(
                 "AuxLoss/train",
+                aux_loss.detach(),
+                self.state[group["params"][-1]]["step"],
+            )
+            self.writer.add_scalar(
+                "SurrogateLoss/train",
                 surrogate_loss.detach(),
                 self.state[group["params"][-1]]["step"],
             )
