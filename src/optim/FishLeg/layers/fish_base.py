@@ -1,11 +1,13 @@
 import torch.nn as nn
 from torch import Tensor
-from torch.nn import ParameterDict
+from torch.nn import ParameterDict, Parameter
 
 from typing import Any, List, Dict, Tuple
 
 from abc import abstractmethod
 
+class FishAuxParameter(Parameter):
+    pass
 
 class FishModule(nn.Module):
     """
@@ -38,6 +40,30 @@ class FishModule(nn.Module):
     def cuda(self, device: str) -> None:
         for p in self.fishleg_aux.values():
             p.to(device)
+
+    def aux_parameters(self, recurse: bool = True):
+        for param in self.parameters(recurse=recurse):
+            if isinstance(param, FishAuxParameter):
+                yield param
+    
+    def named_aux_parameters(self, prefix: str = '',
+            recurse: bool = True,
+            remove_duplicate: bool = True):
+        for name, param in self.named_parameters(prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate):
+            if isinstance(param, FishAuxParameter):
+                yield name, param
+                                            
+    def not_aux_parameters(self, recurse: bool = True):
+        for param in self.parameters(recurse=recurse):
+            if not isinstance(param, FishAuxParameter):
+                yield param
+    
+    def named_not_aux_parameters(self, prefix: str = '',
+            recurse: bool = True,
+            remove_duplicate: bool = True):
+        for name, param in self.named_parameters(prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate):
+            if not isinstance(param, FishAuxParameter):
+                yield name, param
 
     @abstractmethod
     def Qv(self, v: Tuple[Tensor, ...]) -> Tuple[Tensor, ...]:

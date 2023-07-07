@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from torch.nn import ParameterDict, Parameter
+from torch.nn import ParameterDict
 
-from .fish_base import FishModule
+from .fish_base import FishModule, FishAuxParameter
 from typing import Tuple
 
 
@@ -18,19 +18,19 @@ class FishBatchNorm2d(nn.BatchNorm2d, FishModule):
         device=None,
         dtype=None,
     ) -> None:
-        super().__init__(
+        super(FishBatchNorm2d, self).__init__(
             num_features, eps, momentum, affine, track_running_stats, device, dtype
-        )()
+        )
         self._layer_name = "BatchNorm2d"
         if affine:
             self.fishleg_aux = ParameterDict(
                 {
-                    "L_w": Parameter(
+                    "L_w": FishAuxParameter(
                         torch.ones(
                             (num_features,), device=device
                         )  # * np.sqrt(init_scale) # TODO: CHECK
                     ),
-                    "L_b": Parameter(
+                    "L_b": FishAuxParameter(
                         torch.ones(
                             (num_features,), device=device
                         )  # * np.sqrt(init_scale)

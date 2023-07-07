@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch import Tensor
-from torch.nn import ParameterDict, Parameter
+from torch.nn import ParameterDict
 
-from .fish_base import FishModule
+from .fish_base import FishModule, FishAuxParameter
 from .utils import get_zero_grad_hook  # TODO: Is this in torch? Let's upgrade?
 from typing import Tuple
 
@@ -31,10 +31,10 @@ class FishLinear(nn.Linear, FishModule):
         self.init_scale = init_scale
         self.fishleg_aux = ParameterDict(
             {
-                "L": Parameter(torch.eye(in_features + 1)),
-                "R": Parameter(torch.eye(out_features)),
-                "A": Parameter(
-                    torch.ones(out_features, in_features + 1).mul_(np.sqrt(init_scale))
+                "L": FishAuxParameter(torch.eye(in_features + (1 if bias else 0))),
+                "R": FishAuxParameter(torch.eye(out_features)),
+                "A": FishAuxParameter(
+                    torch.ones(out_features, in_features + (1 if bias else 0)).mul_(np.sqrt(init_scale))
                 ),
             }
         )
@@ -44,24 +44,10 @@ class FishLinear(nn.Linear, FishModule):
         mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
         self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
 
-        self.order = ["weight", "bias"]
+        self.order = ["weight", "bias"] if bias else ["weight"]
         self.device = device
 
         self.warmup_state = torch.ones_like(self.fishleg_aux["A"]).to(device)
-
-    def add_warmup_grad(
-        self,
-        grad: Tuple[Tensor, Tensor],
-    ) -> None:
-        # Add this into an overload of to() function?
-        self.warmup_state = self.warmup_state.to(grad[0].device)
-
-        self.warmup_state += torch.cat([grad[0], grad[1][:, None]], dim=-1)
-
-    def finalise_warmup(self, damping: float, num_steps: int) -> None:
-        self.fishleg_aux["A"].data.div_(np.sqrt(self.init_scale)).div_(
-            self.warmup_state.div_(num_steps).add_(damping)
-        )
 
     def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         """
@@ -85,13 +71,13 @@ class FishLinear(nn.Linear, FishModule):
         """
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
-        u = torch.cat([v[0], v[1][:, None]], dim=-1)
+        u = torch.cat([v[0], v[1][:, None]], dim=-1) if self.bias else v[0]
 
         A = self.fishleg_aux["A"]
         u = A * u
         u = torch.linalg.multi_dot((R.T, R, u, L, L.T))
         u = A * u
-        return (u[:, :-1], u[:, -1])
+        return (u[:, :-1], u[:, -1]) if self.bias else (u, )
 
     def diagQ(self) -> Tuple:
         """
@@ -122,4 +108,4 @@ class FishLinear(nn.Linear, FishModule):
         diag = diag * torch.square(self.fishleg_aux["A"].T).reshape(-1)
 
         diag = diag.reshape(L.shape[0], R.shape[0]).T
-        return (diag[:, :-1], diag[:, -1])
+        return (diag[:, :-1], diag[:, -1])  if self.bias else (diag, )
