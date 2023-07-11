@@ -125,13 +125,13 @@ class FishConv2d(nn.Conv2d, FishModule):
             w = diag[: -self.out_channels]
             b = diag[-self.out_channels :]
             w = torch.reshape(
-                w, (self.in_channels_eff * self.k_size, self.out_channels)
+                w, (int(self.in_channels_eff * self.k_size), self.out_channels)
             )
             w = torch.reshape(
                 w.T,
                 (
-                    self.out_channels,
-                    self.in_channels_eff,
+                    int(self.out_channels),
+                    int(self.in_channels_eff),
                     self.kernel_size[0],
                     self.kernel_size[1],
                 ),
@@ -139,14 +139,15 @@ class FishConv2d(nn.Conv2d, FishModule):
             b = torch.reshape(b, (self.out_channels))
             return (w, b)
         else:
+            w = diag
             w = torch.reshape(
-                w, (self.in_channels_eff * self.k_size, self.out_channels)
+                w, (int(self.in_channels_eff * self.k_size), self.out_channels)
             )
             w = torch.reshape(
                 w.T,
                 (
-                    self.out_channels,
-                    self.in_channels_eff,
+                    int(self.out_channels),
+                    int(self.in_channels_eff),
                     self.kernel_size[0],
                     self.kernel_size[1],
                 ),
