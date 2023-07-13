@@ -5,7 +5,6 @@ from torch import Tensor
 from torch.nn import ParameterDict
 
 from .fish_base import FishModule, FishAuxParameter
-from .utils import get_zero_grad_hook  # TODO: Is this in torch? Let's upgrade?
 from typing import Tuple
 
 __all__ = [

@@ -80,26 +80,28 @@ model = nn.Sequential(
 eta_adam = 1e-4
 
 lr = 0.005
-beta = 0.3
+beta = 0.9
 weight_decay = 1e-5
 
 aux_lr = 1e-4
 aux_eps = 1e-8
-scale = 1
-damping = 0.5
-update_aux_every = 3
+scale_factor = 1
+damping = 0.1
+update_aux_every = 10
 
 initialization = "normal"
 normalization = True
 
-model = initialise_FishModel(model, module_names="__ALL__", fish_scale=scale)
+model = initialise_FishModel(
+    model, module_names="__ALL__", fish_scale=scale_factor / damping
+)
 
 model = model.to(device)
 
 likelihood = FISH_LIKELIHOODS["bernoulli"](device=device)
 
 writer = SummaryWriter(
-    log_dir=f"runs/MNIST_fishleg/lr={lr}_lambda={weight_decay}/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+    log_dir=f"runs/MNIST_fishleg/lr={lr}_auxlr={aux_lr}/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
 )
 
 opt = FishLeg(

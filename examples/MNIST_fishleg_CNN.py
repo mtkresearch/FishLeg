@@ -77,14 +77,16 @@ weight_decay = 1e-5
 
 aux_lr = 1e-4
 aux_eps = 1e-8
-scale = 2
-damping = 0.5
+scale_factor = 1
+damping = 0.1
 update_aux_every = 3
 
 initialization = "normal"
 normalization = True
 
-model = initialise_FishModel(model, module_names="__ALL__", fish_scale=scale)
+model = initialise_FishModel(
+    model, module_names="__ALL__", fish_scale=scale_factor / damping
+)
 
 model = model.to(device)
 
@@ -108,7 +110,7 @@ opt = FishLeg(
     update_aux_every=update_aux_every,
     writer=writer,
     method="antithetic",
-    method_kwargs={},
+    method_kwargs={"eps": 1e-4},
     precondition_aux=True,
 )
 
