@@ -54,7 +54,7 @@ writer = SummaryWriter(
     log_dir=f"runs/tests/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
 )
 
-loader = dataloader(batch_size=80)
+loader = dataloader(batch_size=100)
 
 student_model = FishLinear(N, 1, init_scale=1 / gamma, bias=False)
 
@@ -151,39 +151,14 @@ for epoch in range(1, 101):
 
                 Q = torch.kron(rtr, torch.diag(A) @ llt @ torch.diag(A))
 
-                # Q = sum(llt) * torch.diag(A) @ rtr @ torch.diag(A)
-                # # F_inv = torch.matmul(llt, torch.diag(A) ** 2)
-                # # Q = student_model.Qv((torch.eye(N),))
-                # # Q = torch.eye(N)
-
                 eig_app = torch.diag((U.T @ Q) @ U)
                 eig_mse = torch.sum(
                     (torch.sort(eig_app)[0] - torch.sort(targets)[0]) ** 2
                 ).item()
 
-                # for n, (eigenval, target) in enumerate(zip(eig_app, targets)):
-                #     writer.add_scalars(
-                #         f"Eigenvalues/{n}",
-                #         {"pred": eigenval, "target": target},
-                #         (epoch * 100) + batch,
-                #     )
-                #     if n == 5:
-                #         break
-
-                # for n, (eigenval, target) in enumerate(
-                #     zip(reversed(eig_app), reversed(targets))
-                # ):
-                #     writer.add_scalars(
-                #         f"Eigenvalues/{100 - n}",
-                #         {"pred": eigenval, "target": target},
-                #         (epoch * 100) + batch,
-                #     )
-                #     if n == 5:
-                #         break
-
                 tepoch.set_postfix(loss=running_loss / (batch + 1), eig_mse=eig_mse)
 
-    if epoch % 5 == 0:
+    if epoch % 20 == 0:
         rtr = torch.matmul(
             student_model.fishleg_aux["R"].T, student_model.fishleg_aux["R"]
         )
@@ -191,14 +166,13 @@ for epoch in range(1, 101):
             student_model.fishleg_aux["L"],
             student_model.fishleg_aux["L"].T,
         )
-        print(student_model.fishleg_aux["R"])
         A = student_model.fishleg_aux["A"].squeeze()
 
         Q = rtr * torch.diag(A) @ llt @ torch.diag(A)
         final_diag = torch.diag((U.T @ Q) @ U).detach()
 
-        # print(final_diag)
-
         ax.plot(sorted(final_diag), sorted(target_diag), ".")
 
+ax.set_xlabel("Predicted eigenvalues")
+ax.set_ylabel("Target Eigenvalues")
 fig.savefig("test.png")
