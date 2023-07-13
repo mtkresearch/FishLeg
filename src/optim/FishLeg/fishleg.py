@@ -99,6 +99,7 @@ class FishLeg(Optimizer):
         method: str = "rank-1",
         method_kwargs: Dict = {},
         precondition_aux: bool = True,
+        u_sampling: str = "gradient",
         writer: SummaryWriter or bool = False,
     ) -> None:
         self.model = model
@@ -117,7 +118,8 @@ class FishLeg(Optimizer):
             update_aux_every=update_aux_every,
             method=method,
             method_kwargs=method_kwargs,
-            precondition_aux=precondition_aux
+            precondition_aux=precondition_aux,
+            u_sampling=u_sampling,
         )
         params = [
             param
@@ -127,7 +129,9 @@ class FishLeg(Optimizer):
         super(FishLeg, self).__init__(params, defaults)
 
         aux_params = [
-            param for _, param in model.named_parameters() if isinstance(param, FishAuxParameter)
+            param
+            for _, param in model.named_parameters()
+            if isinstance(param, FishAuxParameter)
         ]
 
         if len(self.likelihood.get_parameters()) > 0:
@@ -171,48 +175,58 @@ class FishLeg(Optimizer):
         method = group["method"]
         method_kwargs = group["method_kwargs"]
         precondition_aux = group["precondition_aux"]
+        u_sampling = group["u_sampling"]
 
         pred_y = self.model(data_x)
         with torch.no_grad():
             samples_y = self.likelihood.draw(pred_y)
 
-        g2 = 0.0
-        for g in group["params"]:
-            g2 += torch.sum(g.grad.data**2)
-        g_norm = torch.sqrt(g2.detach())
+        def sample_u(g: torch.Tensor) -> torch.Tensor:
+            if u_sampling == "gradient":
+                return g
+            elif u_sampling == "gaussian":
+                return torch.randn(size=g.shape)
+            else:
+                raise NotImplementedError(
+                    f"{u_sampling} method of sampling u not implemented yet!"
+                )
 
         surrogate_loss = 0
 
-        v_model = []
-        v2 = 0
+        v_model, u_model = [], []
+        v2, u2 = 0, 0
         for module in self.model.modules():
             if isinstance(module, FishModule):
                 layer_grads = []
                 for param in module.not_aux_parameters():
-                    layer_grads.append(param.grad.data / g_norm)
+                    layer_grads.append(sample_u(param.grad.data))
+
                 v_layer = module.Qv(layer_grads)
 
-                for v in v_layer:
-                    v2 += torch.sum(v.detach()**2)
+                for v, u in zip(v_layer, layer_grads):
+                    v2 += torch.sum(v.detach() ** 2)
+                    u2 += torch.sum(u**2)
                     v_model.append(v)
+                    u_model.append(u)
 
-        v_norm = torch.sqrt(v2)
+        u_norm = torch.sqrt(u2)
+        v_norm = torch.sqrt(v2) * u_norm
 
         # the different methods differ in how they compute Fv_norm
 
         if method == "antithetic":
             eps = method_kwargs["eps"] if "eps" in method_kwargs.keys() else 1e-4
 
-            def _augment_params_by(eps: float, nat_grads: List, norm: float = 1):
+            def _augment_params_by(eps: float):
                 p_idx = 0
                 for module in self.model.modules():
                     if isinstance(module, FishModule):
                         for param in module.not_aux_parameters():
-                            param.data += eps * nat_grads[p_idx].detach() / norm
+                            param.data += eps * v_model[p_idx].detach() / v_norm
                             p_idx += 1
 
             # Add to gradients
-            _augment_params_by(eps, v_model, norm=v_norm)
+            _augment_params_by(eps)
 
             pred_y = self.model(data_x)
             plus_loss = self.likelihood.nll(pred_y, samples_y)
@@ -224,7 +238,7 @@ class FishLeg(Optimizer):
             )
 
             # Minus gradients
-            _augment_params_by(-2 * eps, v_model, norm=v_norm)
+            _augment_params_by(-2 * eps)
 
             pred_y = self.model(data_x)
             minus_loss = self.likelihood.nll(pred_y, samples_y)
@@ -236,11 +250,10 @@ class FishLeg(Optimizer):
             )
 
             # Restore parameters
-            _augment_params_by(eps, v_model, norm=v_norm)
+            _augment_params_by(eps)
 
             Fv_norm = list(map(lambda a, b: 0.5 * (a - b) / eps, plus_grad, minus_grad))
 
-        
         elif method == "rank-1":
             loss = self.likelihood.nll(pred_y, samples_y)
 
@@ -259,25 +272,28 @@ class FishLeg(Optimizer):
                         sample_grad = gs[p_idx]
                         g_dot_w += torch.sum(nat_grad.detach() * sample_grad)
                         p_idx += 1
-                                            
+
             Fv_norm = list(map(lambda a: g_dot_w * a / v_norm, v_model))
-       
+
         else:
             raise NotImplementedError(
                 f"{method} method of approximation not implemented yet!"
             )
 
+        # Note that here v_norm already contains a factor of u_norm!
         v_adj = list(
             map(
-                lambda Fv, v, p: (Fv + float(damping)*v.detach()/v_norm) / v_norm - (p.grad.data / g_norm) / v_norm**2,
+                lambda Fv, v, u: (
+                    (Fv + float(damping) * v.detach() / v_norm) - u / v_norm
+                ),
                 Fv_norm,
                 v_model,
-                group["params"],
+                u_model,
             )
         )
 
-        aux_loss = 0
         if precondition_aux:
+            aux_loss = 0
             with torch.no_grad():
                 v_adj_new = []
                 count = 0
@@ -286,11 +302,13 @@ class FishLeg(Optimizer):
                         v_adj_group = []
                         for param in module.not_aux_parameters():
                             v_adj_group.append(v_adj[count])
-                            aux_loss += torch.dot(v_adj[count].reshape(-1), v_model[count].reshape(-1))
+                            aux_loss += torch.dot(
+                                v_adj[count].reshape(-1), v_model[count].reshape(-1)
+                            )
                             count += 1
                         v_adj_new_group = module.Qv(v_adj_group)
                         for v in v_adj_new_group:
-                            v_adj_new.append(v/v_norm)
+                            v_adj_new.append(v / v_norm)
                 v_adj = v_adj_new
 
         for v_a, v in zip(v_adj, v_model):
@@ -298,10 +316,14 @@ class FishLeg(Optimizer):
 
         surrogate_loss.backward()
 
+        # With no preconditioning, aux loss and surrogate loss should be identical.
+        if not precondition_aux:
+            aux_loss = surrogate_loss.item()
+
         if self.writer:
             self.writer.add_scalar(
                 "AuxLoss/train",
-                aux_loss.detach(),
+                aux_loss,
                 self.state[group["params"][-1]]["step"],
             )
             self.writer.add_scalar(
