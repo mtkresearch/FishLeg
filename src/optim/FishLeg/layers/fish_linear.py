@@ -34,20 +34,20 @@ class FishLinear(nn.Linear, FishModule):
                 "L": FishAuxParameter(torch.eye(in_features + (1 if bias else 0))),
                 "R": FishAuxParameter(torch.eye(out_features)),
                 "A": FishAuxParameter(
-                    torch.ones(out_features, in_features + (1 if bias else 0)).mul_(np.sqrt(init_scale))
+                    torch.ones(out_features, in_features + (1 if bias else 0)).mul_(
+                        np.sqrt(init_scale)
+                    )
                 ),
             }
         )
-        mask_L = torch.tril(torch.ones_like(self.fishleg_aux["L"])).to(device)
-        self.fishleg_aux["L"].register_hook(get_zero_grad_hook(mask_L))
+        # mask_L = torch.tril(torch.ones_like(self.fishleg_aux["L"])).to(device)
+        # self.fishleg_aux["L"].register_hook(get_zero_grad_hook(mask_L))
 
-        mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
-        self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
+        # mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
+        # self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
 
         self.order = ["weight", "bias"] if bias else ["weight"]
         self.device = device
-
-        self.warmup_state = torch.ones_like(self.fishleg_aux["A"]).to(device)
 
     def Qv(self, v: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         """
@@ -77,7 +77,7 @@ class FishLinear(nn.Linear, FishModule):
         u = A * u
         u = torch.linalg.multi_dot((R.T, R, u, L, L.T))
         u = A * u
-        return (u[:, :-1], u[:, -1]) if self.bias else (u, )
+        return (u[:, :-1], u[:, -1]) if self.bias else (u,)
 
     def diagQ(self) -> Tuple:
         """
@@ -108,4 +108,4 @@ class FishLinear(nn.Linear, FishModule):
         diag = diag * torch.square(self.fishleg_aux["A"].T).reshape(-1)
 
         diag = diag.reshape(L.shape[0], R.shape[0]).T
-        return (diag[:, :-1], diag[:, -1])  if self.bias else (diag, )
+        return (diag[:, :-1], diag[:, -1]) if self.bias else (diag,)

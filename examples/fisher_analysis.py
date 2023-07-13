@@ -27,7 +27,7 @@ for i in range(1, N + 1):
 
 Lambda = torch.Tensor(lambda_i)
 
-F = (U @ Lambda) @ U.T
+F = (U * Lambda) @ U.T
 
 teacher_model = nn.Linear(N, 1, bias=False)
 
@@ -54,7 +54,7 @@ writer = SummaryWriter(
     log_dir=f"runs/tests/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
 )
 
-loader = dataloader(batch_size=100)
+loader = dataloader(batch_size=80)
 
 student_model = FishLinear(N, 1, init_scale=1 / gamma, bias=False)
 
@@ -70,8 +70,8 @@ opt = FishLeg(
     student_model,
     loader,
     likelihood,
-    lr=lr_fl_zero,
-    beta=0.7,
+    lr=0,
+    beta=0.9,
     weight_decay=0,  # 1e-5,
     aux_lr=0.0001,
     aux_betas=(0.9, 0.99),
@@ -83,6 +83,8 @@ opt = FishLeg(
         "eps": 1e-4,
     },
     writer=writer,
+    precondition_aux=True,
+    u_sampling="gaussian",
 )
 
 
@@ -104,7 +106,7 @@ llt = torch.matmul(
 A = student_model.fishleg_aux["A"].squeeze()
 
 Q = torch.kron(rtr, torch.diag(A) @ llt @ torch.diag(A))
-final_diag = torch.diag(Q).detach().numpy()
+final_diag = torch.diag((U.T @ Q) @ U).detach()
 
 fig, ax = plt.subplots(1, 1)
 ax.plot(sorted(final_diag), sorted(target_diag), ".")
@@ -112,15 +114,15 @@ ax.plot(sorted(target_diag), sorted(target_diag), ls="--", color="k")
 
 
 k = 0
-for epoch in range(1, 1001):
+for epoch in range(1, 101):
     with tqdm(loader, unit="batch") as tepoch:
         running_loss = 0
         tepoch.set_description(f"Epoch {epoch}")
         for batch in range(100):
-            for g in opt.param_groups:
-                g["lr"] = min(
-                    lr_fl_zero + (lr_fl_inf - lr_fl_zero) * k / warmup_lr_K, lr_fl_inf
-                )
+            # for g in opt.param_groups:
+            #     g["lr"] = min(
+            #         lr_fl_zero + (lr_fl_inf - lr_fl_zero) * k / warmup_lr_K, lr_fl_inf
+            #     )
             opt.zero_grad()
             x, y = next(loader)
             pred_y = student_model(x)
@@ -155,7 +157,9 @@ for epoch in range(1, 1001):
                 # # Q = torch.eye(N)
 
                 eig_app = torch.diag((U.T @ Q) @ U)
-                eig_mse = torch.sum((eig_app - targets) ** 2).item()
+                eig_mse = torch.sum(
+                    (torch.sort(eig_app)[0] - torch.sort(targets)[0]) ** 2
+                ).item()
 
                 # for n, (eigenval, target) in enumerate(zip(eig_app, targets)):
                 #     writer.add_scalars(
@@ -179,7 +183,7 @@ for epoch in range(1, 1001):
 
                 tepoch.set_postfix(loss=running_loss / (batch + 1), eig_mse=eig_mse)
 
-    if epoch % 25 == 0:
+    if epoch % 5 == 0:
         rtr = torch.matmul(
             student_model.fishleg_aux["R"].T, student_model.fishleg_aux["R"]
         )
@@ -187,12 +191,13 @@ for epoch in range(1, 1001):
             student_model.fishleg_aux["L"],
             student_model.fishleg_aux["L"].T,
         )
+        print(student_model.fishleg_aux["R"])
         A = student_model.fishleg_aux["A"].squeeze()
 
-        Q = torch.kron(rtr, torch.diag(A) @ llt @ torch.diag(A))
-        final_diag = torch.diag(Q).detach().numpy()
+        Q = rtr * torch.diag(A) @ llt @ torch.diag(A)
+        final_diag = torch.diag((U.T @ Q) @ U).detach()
 
-        print(final_diag)
+        # print(final_diag)
 
         ax.plot(sorted(final_diag), sorted(target_diag), ".")
 
