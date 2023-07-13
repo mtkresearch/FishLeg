@@ -11,6 +11,7 @@ import torch.optim as optim
 from datetime import datetime
 
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data.dataloader import default_collate
 
 from data_utils import read_data_sets
 
@@ -39,14 +40,25 @@ test_dataset = dataset.test
 batch_size = 100
 
 train_loader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=batch_size, shuffle=True
+    train_dataset,
+    batch_size=batch_size,
+    shuffle=True,
+    collate_fn=lambda x: tuple(x_.to(device) for x_ in default_collate(x)),
 )
 
 aux_loader = torch.utils.data.DataLoader(
-    train_dataset, shuffle=True, batch_size=batch_size
+    train_dataset,
+    shuffle=True,
+    batch_size=batch_size,
+    collate_fn=lambda x: tuple(x_.to(device) for x_ in default_collate(x)),
 )
 
-test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1000, shuffle=False)
+test_loader = torch.utils.data.DataLoader(
+    test_dataset,
+    batch_size=1000,
+    shuffle=False,
+    collate_fn=lambda x: tuple(x_.to(device) for x_ in default_collate(x)),
+)
 
 model = nn.Sequential(
     nn.Linear(784, 1000, dtype=torch.float32),
@@ -68,26 +80,28 @@ model = nn.Sequential(
 eta_adam = 1e-4
 
 lr = 0.005
-beta = 0.3
+beta = 0.9
 weight_decay = 1e-5
 
 aux_lr = 1e-4
 aux_eps = 1e-8
-scale = 1
-damping = 0.5
-update_aux_every = 3
+scale_factor = 1
+damping = 0.1
+update_aux_every = 10
 
 initialization = "normal"
 normalization = True
 
-model = initialise_FishModel(model, module_names="__ALL__", fish_scale=scale)
+model = initialise_FishModel(
+    model, module_names="__ALL__", fish_scale=scale_factor / damping
+)
 
 model = model.to(device)
 
 likelihood = FISH_LIKELIHOODS["bernoulli"](device=device)
 
 writer = SummaryWriter(
-    log_dir=f"runs/MNIST_fishleg/lr={lr}_lambda={weight_decay}/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+    log_dir=f"runs/MNIST_fishleg/lr={lr}_auxlr={aux_lr}/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
 )
 
 opt = FishLeg(
@@ -103,8 +117,8 @@ opt = FishLeg(
     damping=damping,
     update_aux_every=update_aux_every,
     writer=writer,
-    method="rank-1",
-    method_kwargs={},
+    method="antithetic",
+    method_kwargs={"eps": 1e-4},
     precondition_aux=True,
 )
 
