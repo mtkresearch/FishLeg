@@ -23,8 +23,10 @@ def bernoulli_accuracy(predictions, labels):
 
 
 def class_accuracy(predictions, labels):
-    y = torch.argmax(predictions, dim=1)
-    return np.mean(float(y.eq(labels)))
+    y = torch.max(predictions, 1)[1]
+    y_labels = torch.max(labels, 1)[1]
+
+    return torch.mean(y.eq(y_labels).float())
 
 
 def mse_for_whole_dataset(fl, theta, D, batch_size, nll_name):

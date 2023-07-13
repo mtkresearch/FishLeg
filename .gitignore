@@ -76,6 +76,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+test*.ipynb
 
 # IPython
 profile_default/
@@ -133,7 +134,12 @@ dmypy.json
 
 *.DS_Store
 
-*.ipynb
-
 src/optim/sphinx
 data/
+src/training_output
+
+# Tensorboard
+runs/
+
+# Test files
+test-*.py

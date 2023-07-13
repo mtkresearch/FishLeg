@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import torch.optim as optim
 from torch.utils.data import Dataset
 import copy
+import argparse
 
 torch.set_default_dtype(torch.float32)
 
@@ -125,9 +126,7 @@ class ImageDataSet(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
-        return torch.tensor(self._images[idx]).to(device), torch.tensor(
-            self._labels[idx]
-        ).to(device)
+        return torch.tensor(self._images[idx]), torch.tensor(self._labels[idx])
 
 
 def _read32(bytestream):
@@ -227,14 +226,22 @@ def read_data_sets(name_dataset, home_path, if_autoencoder=True):
 
         local_file = maybe_download(SOURCE_URL, TRAIN_IMAGES, train_dir)
         print(f"Data read from {local_file}")
-        import mat4py
 
-        images_ = mat4py.loadmat(local_file)
-        images_ = np.asarray(images_["newfaces_single"])
-        images_ = np.transpose(images_)
+        numpy_file = os.path.dirname(local_file) + "/faces.npy"
+        if os.path.exists(numpy_file):
+            images_ = np.load(numpy_file)
+        else:
+            import mat4py
+
+            images_ = mat4py.loadmat(local_file)
+            images_ = np.asarray(images_["newfaces_single"])
+
+            images_ = np.transpose(images_)
+            np.save(numpy_file, images_)
+            print(f"Data saved to {numpy_file}")
 
         train_images = images_[:103500]
-        test_images = images_[-41400:]
+        test_images = images_[103500:]
 
         train_images = train_images[:, :, np.newaxis, np.newaxis]
         test_images = test_images[:, :, np.newaxis, np.newaxis]
@@ -266,7 +273,11 @@ def read_data_sets(name_dataset, home_path, if_autoencoder=True):
 
 if __name__ == "__main__":
 
-    seed = 42
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument("--exp", type=str, help="which dataset", default="MNIST")
+    args = argparser.parse_args()
+
+    seed = 13
     torch.manual_seed(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
@@ -277,31 +288,72 @@ if __name__ == "__main__":
     print("device", device)
 
     ## Hyperparams
-    batch_size = 100
-    epochs = 1
-    eta_adam = 1e-4
-    eta_fl = 5e-2
-    eta_sgd = 1e-2
-    aux_eta = 1e-4
-    weight_decay = 1e-5
-    beta = 0.9
-    damping = 1.0
-    eps = 1e-4
+    if args.exp == "FACES":
+
+        batch_size = 100
+        epochs = 5
+        eta_adam = 3e-5
+        eta_fl = 0.05
+        eta_sgd = 0.01
+        aux_eta = 5e-4
+        weight_decay = 1e-5
+        beta = 0.9
+        damping = 1.0
+
+        dataset = read_data_sets("FACES", "../data/", if_autoencoder=True)
+
+    if args.exp == "MNIST":
+        batch_size = 100
+        epochs = 10
+        
+        eta_adam = 1e-4
+
+        fish_lr = 0.02
+        beta = 0.9
+        weight_decay = 1e-5
+        update_aux_every = 10
+        aux_lr = 2e-3
+        aux_eps = 1e-8
+        damping = 0.3
+        pre_aux_training = 10
+        scale = 1
+        initialization = "normal"
+        normalization = True
+        batch_speedup = False
+        fine_tune = False
+        warmup = 0
+
+        dataset = read_data_sets("MNIST", "../data/", if_autoencoder=True)
 
     ## Dataset
-    dataset = read_data_sets("FACES", "../data/", if_autoencoder=True)
     train_dataset = dataset.train
     test_dataset = dataset.test
+    if args.exp == "FACES":
+        likelihood = FISH_LIKELIHOODS["fixedgaussian"](sigma=1.0, device=device)
 
-    likelihood = FISH_LIKELIHOODS["FixedGaussian".lower()](sigma=1.0, device=device)
+        def mse(model, data):
+            data_x, data_y = data
+            pred_y = model.forward(data_x)
+            return torch.mean(torch.square(pred_y - data_y))
 
-    def nll(model, data_x, data_y):
+    if args.exp == "MNIST":
+        likelihood = FISH_LIKELIHOODS["bernoulli"](device=device)
+
+        def mse(model, data):
+            data_x, data_y = data
+            pred_y = model.forward(data_x)
+            pred_y = torch.sigmoid(pred_y)
+            return torch.mean(torch.square(pred_y - data_y))
+
+    def nll(model, data):
+        data_x, data_y = data
         pred_y = model.forward(data_x)
         return likelihood.nll(data_y, pred_y)
 
-    def draw(model, data_x):
+    def draw(model, data):
+        data_x, data_y = data
         pred_y = model.forward(data_x)
-        return likelihood.draw(pred_y)
+        return (data_x, likelihood.draw(pred_y))
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True
@@ -311,95 +363,125 @@ if __name__ == "__main__":
     )
 
     test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False
+        test_dataset, batch_size=1000, shuffle=False
     )
 
-    model = nn.Sequential(
-        nn.Linear(625, 2000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(2000, 1000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(1000, 500, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(500, 30, dtype=torch.float32),
-        nn.Linear(30, 500, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(500, 1000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(1000, 2000, dtype=torch.float32),
-        nn.ReLU(),
-        nn.Linear(2000, 625, dtype=torch.float32),
-    ).to(device)
+    test_loader_adam = torch.utils.data.DataLoader(
+        test_dataset, batch_size=1000, shuffle=False
+    )
+
+    if args.exp == "FACES":
+        model = nn.Sequential(
+            nn.Linear(625, 2000),
+            nn.ReLU(),
+            nn.Linear(2000, 1000),
+            nn.ReLU(),
+            nn.Linear(1000, 500),
+            nn.ReLU(),
+            nn.Linear(500, 30),
+            nn.Linear(30, 500),
+            nn.ReLU(),
+            nn.Linear(500, 1000),
+            nn.ReLU(),
+            nn.Linear(1000, 2000),
+            nn.ReLU(),
+            nn.Linear(2000, 625),
+        ).to(device)
+
+    if args.exp == "MNIST":
+        model = nn.Sequential(
+            nn.Linear(784, 1000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(1000, 500, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(500, 250, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(250, 30, dtype=torch.float32),
+            nn.Linear(30, 250, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(250, 500, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(500, 1000, dtype=torch.float32),
+            nn.ReLU(),
+            nn.Linear(1000, 784, dtype=torch.float32),
+        ).to(device)
 
     model_adam = copy.deepcopy(model)
 
-    print("lr fl={}, lr sgd={}".format(eta_fl, eta_sgd))
+    # print("lr fl={}, lr sgd={}, lr aux={}".format(eta_fl, eta_sgd, aux_eta))
 
     opt = FishLeg(
         model,
         draw,
         nll,
         aux_loader,
-        lr=eta_fl,
-        eps=eps,
+        likelihood,
+        fish_lr=fish_lr,
         beta=beta,
-        weight_decay=1e-5,
-        update_aux_every=10,
-        aux_lr=aux_eta,
+        weight_decay=weight_decay,
+        update_aux_every=update_aux_every,
+        aux_lr=aux_lr,
         aux_betas=(0.9, 0.999),
-        aux_eps=1e-8,
+        aux_eps=aux_eps,
         damping=damping,
-        pre_aux_training=25,
-        sgd_lr=eta_sgd,
+        pre_aux_training=pre_aux_training,
+        initialization=initialization,
         device=device,
+        batch_speedup=batch_speedup,
+        scale=scale,
     )
+
+    print(opt.__dict__["fish_lr"])
+    print(opt.__dict__["beta"])
+    print(opt.__dict__["aux_lr"])
+    print(opt.__dict__["damping"])
+    print(opt.__dict__["scale"])
 
     FL_time = []
     LOSS = []
+    AUX_LOSS = []
     TEST_LOSS = []
     st = time.time()
-
+    iteration = 0
     for e in range(1, epochs + 1):
         print("######## EPOCH", e)
-        for n, (batch_data, batch_labels) in enumerate(train_loader):
-            batch_data.to(device), batch_labels.to(device)
+        for n, (batch_data, batch_labels) in enumerate(train_loader, start=1):
+            iteration += 1
+            batch_data, batch_labels = batch_data.to(device), batch_labels.to(device)
             opt.zero_grad()
-            loss = nll(opt.model, batch_data, batch_labels)
+            loss = nll(opt.model, (batch_data, batch_labels))
             loss.backward()
             opt.step()
 
             if n % 50 == 0:
                 FL_time.append(time.time() - st)
                 LOSS.append(loss.detach().cpu().numpy())
-                test_loss = 0
-                for m, (test_batch_data, test_batch_labels) in enumerate(test_loader):
-                    test_batch_data.to(device), test_batch_labels.to(device)
-                    test_loss += (
-                        nll(opt.model, test_batch_data, test_batch_labels)
-                        .detach()
-                        .cpu()
-                        .numpy()
-                    )
-                    if m == 10:
-                        break
+                AUX_LOSS.append(opt.aux_loss)
 
-                TEST_LOSS.append(test_loss / m)
+                test_batch_data, test_batch_labels = next(iter(test_loader))
+                test_batch_data, test_batch_labels = test_batch_data.to(
+                    device
+                ), test_batch_labels.to(device)
+                test_loss = mse(opt.model, (test_batch_data, test_batch_labels))
 
-                print(n, LOSS[-1], TEST_LOSS[-1])
+                TEST_LOSS.append(test_loss.detach().cpu().numpy())
 
-    plt.plot(FL_time, LOSS, label="eps={}".format(eps))  # color=colors_group[i])
-    plt.plot(
-        FL_time, TEST_LOSS, label="eps={} test".format(eps)
+                print(n, LOSS[-1], AUX_LOSS[-1], TEST_LOSS[-1])
+
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+    axs[0].plot(FL_time, LOSS, label="Fishleg")  # color=colors_group[i])
+    axs[1].plot(
+        FL_time, TEST_LOSS, label="Fishleg"
     )  # linestyle='--', color=colors_group[i])
 
     opt = optim.Adam(
         model_adam.parameters(),
         lr=eta_adam,
-        betas=(0.9, 0.999),
+        betas=(0.9, 0.9),
         weight_decay=weight_decay,
-        eps=1e-8,
+        eps=1e-4,
     )
-
+    iteration = 0
     FL_time = []
     LOSS = []
     TEST_LOSS = []
@@ -407,34 +489,31 @@ if __name__ == "__main__":
     for e in range(1, epochs + 1):
         print("######## EPOCH", e)
         for n, (batch_data, batch_labels) in enumerate(train_loader):
-            batch_data.to(device), batch_labels.to(device)
+            iteration += 1
+            batch_data, batch_labels = batch_data.to(device), batch_labels.to(device)
             opt.zero_grad()
-            loss = nll(model_adam, batch_data, batch_labels)
+            loss = nll(model_adam, (batch_data, batch_labels))
             loss.backward()
             opt.step()
 
             if n % 50 == 0:
                 FL_time.append(time.time() - st)
                 LOSS.append(loss.detach().cpu().numpy())
-                test_loss = 0
-                for m, (test_batch_data, test_batch_labels) in enumerate(test_loader):
-                    test_batch_data.to(device), test_batch_labels.to(device)
-                    test_loss += (
-                        nll(model_adam, test_batch_data, test_batch_labels)
-                        .detach()
-                        .cpu()
-                        .numpy()
-                    )
-                    if m == 10:
-                        break
-
-                TEST_LOSS.append(test_loss / m)
+                test_batch_data, test_batch_labels = next(iter(test_loader_adam))
+                test_batch_data, test_batch_labels = test_batch_data.to(
+                    device
+                ), test_batch_labels.to(device)
+                test_loss = mse(model_adam, (test_batch_data, test_batch_labels))
+                TEST_LOSS.append(test_loss.detach().cpu().numpy())
 
                 print(n, LOSS[-1], TEST_LOSS[-1])
 
-    plt.plot(FL_time, LOSS, label="Adam", color="blue")
-    plt.plot(FL_time, TEST_LOSS, label="Adam_test", linestyle="--", color="blue")
+    axs[0].plot(FL_time, LOSS, label="Adam")
+    axs[1].plot(FL_time, TEST_LOSS, label="Adam")
 
-    plt.legend()
+    axs[0].legend()
+    axs[1].legend()
 
-    plt.savefig("result/result.png", dpi=300)
+    axs[0].set_title("Training Loss")
+    axs[1].set_title("Test MSE")
+    fig.savefig("result/result.png", dpi=300)
