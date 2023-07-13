@@ -181,25 +181,20 @@ class FishLeg(Optimizer):
         with torch.no_grad():
             samples_y = self.likelihood.draw(pred_y)
 
-        # g2 = 0.0
-        # for g in group["params"]:
-        #     g2 += torch.sum(g.grad.data**2)
-        # g_norm = torch.sqrt(g2.detach())
-
-        def sample_u(g):
+        def sample_u(g: torch.Tensor) -> torch.Tensor:
             if u_sampling == "gradient":
                 return g
             elif u_sampling == "gaussian":
                 return torch.randn(size=g.shape)
             else:
-                NotImplementedError()
+                raise NotImplementedError(
+                    f"{u_sampling} method of sampling u not implemented yet!"
+                )
 
         surrogate_loss = 0
 
-        v_model = []
-        u_model = []
-        v2 = 0
-        u2 = 0
+        v_model, u_model = [], []
+        v2, u2 = 0, 0
         for module in self.model.modules():
             if isinstance(module, FishModule):
                 layer_grads = []
@@ -285,7 +280,7 @@ class FishLeg(Optimizer):
                 f"{method} method of approximation not implemented yet!"
             )
 
-        #
+        # Note that here v_norm already contains a factor of u_norm!
         v_adj = list(
             map(
                 lambda Fv, v, u: (
@@ -321,6 +316,7 @@ class FishLeg(Optimizer):
 
         surrogate_loss.backward()
 
+        # With no preconditioning, aux loss and surrogate loss should be identical.
         if not precondition_aux:
             aux_loss = surrogate_loss.item()
 
@@ -335,11 +331,11 @@ class FishLeg(Optimizer):
                 surrogate_loss.detach(),
                 self.state[group["params"][-1]]["step"],
             )
-            # self.writer.add_scalar(
-            #     "lr",
-            #     group["lr"],
-            #     self.state[group["params"][-1]]["step"],
-            # )
+            self.writer.add_scalar(
+                "lr",
+                group["lr"],
+                self.state[group["params"][-1]]["step"],
+            )
 
         self.aux_opt.step()
         return surrogate_loss.item()

@@ -40,11 +40,6 @@ class FishLinear(nn.Linear, FishModule):
                 ),
             }
         )
-        # mask_L = torch.tril(torch.ones_like(self.fishleg_aux["L"])).to(device)
-        # self.fishleg_aux["L"].register_hook(get_zero_grad_hook(mask_L))
-
-        # mask_R = torch.triu(torch.ones_like(self.fishleg_aux["R"])).to(device)
-        # self.fishleg_aux["R"].register_hook(get_zero_grad_hook(mask_R))
 
         self.order = ["weight", "bias"] if bias else ["weight"]
         self.device = device
