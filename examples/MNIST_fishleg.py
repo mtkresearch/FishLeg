@@ -11,6 +11,7 @@ import torch.optim as optim
 from datetime import datetime
 
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data.dataloader import default_collate
 
 from data_utils import read_data_sets
 
@@ -39,14 +40,25 @@ test_dataset = dataset.test
 batch_size = 100
 
 train_loader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=batch_size, shuffle=True
+    train_dataset,
+    batch_size=batch_size,
+    shuffle=True,
+    collate_fn=lambda x: tuple(x_.to(device) for x_ in default_collate(x)),
 )
 
 aux_loader = torch.utils.data.DataLoader(
-    train_dataset, shuffle=True, batch_size=batch_size
+    train_dataset,
+    shuffle=True,
+    batch_size=batch_size,
+    collate_fn=lambda x: tuple(x_.to(device) for x_ in default_collate(x)),
 )
 
-test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1000, shuffle=False)
+test_loader = torch.utils.data.DataLoader(
+    test_dataset,
+    batch_size=1000,
+    shuffle=False,
+    collate_fn=lambda x: tuple(x_.to(device) for x_ in default_collate(x)),
+)
 
 model = nn.Sequential(
     nn.Linear(784, 1000, dtype=torch.float32),
@@ -103,8 +115,8 @@ opt = FishLeg(
     damping=damping,
     update_aux_every=update_aux_every,
     writer=writer,
-    method="rank-1",
-    method_kwargs={},
+    method="antithetic",
+    method_kwargs={"eps": 1e-4},
     precondition_aux=True,
 )
 
