@@ -66,13 +66,13 @@ class FishLinear(nn.Linear, FishModule):
         """
         L = self.fishleg_aux["L"]
         R = self.fishleg_aux["R"]
-        u = torch.cat([v[0], v[1][:, None]], dim=-1) if self.bias else v[0]
+        u = torch.cat([v[0], v[1][:, None]], dim=-1) if self.bias is not None else v[0]
 
         A = self.fishleg_aux["A"]
         u = A * u
         u = torch.linalg.multi_dot((R.T, R, u, L, L.T))
         u = A * u
-        return (u[:, :-1], u[:, -1]) if self.bias else (u,)
+        return (u[:, :-1], u[:, -1]) if self.bias is not None else (u,)
 
     def diagQ(self) -> Tuple:
         """
