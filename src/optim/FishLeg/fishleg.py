@@ -155,7 +155,7 @@ class FishLeg(Optimizer):
             for s in state_values:
                 s["step"] = torch.tensor(float(s["step"]))
 
-    def update_aux(self) -> None:
+    def update_aux(self, log_results=True) -> None:
         """
         Performs a single auxliarary parameter update
         using Adam. By minimizing the following objective:
@@ -185,7 +185,8 @@ class FishLeg(Optimizer):
             if u_sampling == "gradient":
                 return g
             elif u_sampling == "gaussian":
-                return torch.randn(size=g.shape)
+                u = torch.randn(size=g.shape)
+                return u.to(g.device)
             else:
                 raise NotImplementedError(
                     f"{u_sampling} method of sampling u not implemented yet!"
@@ -320,7 +321,7 @@ class FishLeg(Optimizer):
         if not precondition_aux:
             aux_loss = surrogate_loss.item()
 
-        if self.writer:
+        if self.writer and log_results:
             self.writer.add_scalar(
                 "AuxLoss/train",
                 aux_loss,
@@ -339,6 +340,24 @@ class FishLeg(Optimizer):
 
         self.aux_opt.step()
         return surrogate_loss.item()
+
+    def pretrain_fish(
+        self, iterations: int, pretrain_writer: SummaryWriter or None = None
+    ) -> List:
+        pretrain_losses = []
+        for pre_step in range(1, iterations + 1):
+            loss = self.update_aux(log_results=False)
+
+            pretrain_losses.append(loss)
+
+            if pretrain_writer:
+                pretrain_writer.add_scalar(
+                    "SurrogateLoss/pretrain",
+                    loss,
+                    pre_step,
+                )
+
+        return pretrain_losses
 
     def _init_group(
         self,
