@@ -155,7 +155,7 @@ class FishLeg(Optimizer):
             for s in state_values:
                 s["step"] = torch.tensor(float(s["step"]))
 
-    def update_aux(self, log_results=True) -> None:
+    def update_aux(self, log_results=True, u_sample_overwrite=False) -> None:
         """
         Performs a single auxliarary parameter update
         using Adam. By minimizing the following objective:
@@ -175,7 +175,10 @@ class FishLeg(Optimizer):
         method = group["method"]
         method_kwargs = group["method_kwargs"]
         precondition_aux = group["precondition_aux"]
-        u_sampling = group["u_sampling"]
+        if u_sample_overwrite:
+            u_sampling = u_sample_overwrite
+        else:
+            u_sampling = group["u_sampling"]
 
         pred_y = self.model(data_x)
         with torch.no_grad():
@@ -346,7 +349,7 @@ class FishLeg(Optimizer):
     ) -> List:
         pretrain_losses = []
         for pre_step in range(1, iterations + 1):
-            loss = self.update_aux(log_results=False)
+            loss = self.update_aux(log_results=False, u_sample_overwrite="gaussian")
 
             pretrain_losses.append(loss)
 
