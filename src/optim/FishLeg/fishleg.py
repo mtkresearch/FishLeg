@@ -287,9 +287,7 @@ class FishLeg(Optimizer):
         # Note that here v_norm already contains a factor of u_norm!
         v_adj = list(
             map(
-                lambda Fv, v, u: (
-                    (Fv + float(damping) * v.detach() / v_norm) - u / v_norm
-                ),
+                lambda Fv, v, u: ((Fv + damping * v.detach() / v_norm) - u / v_norm),
                 Fv_norm,
                 v_model,
                 u_model,
