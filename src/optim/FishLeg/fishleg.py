@@ -214,7 +214,7 @@ class FishLeg(Optimizer):
                     u_model.append(u)
 
         u_norm = torch.sqrt(u2)
-        v_norm = torch.sqrt(v2) * u_norm
+        v_norm = torch.sqrt(v2)
 
         # the different methods differ in how they compute Fv_norm
 
@@ -255,6 +255,7 @@ class FishLeg(Optimizer):
 
             # Restore parameters
             _augment_params_by(eps)
+            print(plus_loss - minus_loss)
 
             Fv_norm = list(map(lambda a, b: 0.5 * (a - b) / eps, plus_grad, minus_grad))
 
@@ -287,7 +288,9 @@ class FishLeg(Optimizer):
         # Note that here v_norm already contains a factor of u_norm!
         v_adj = list(
             map(
-                lambda Fv, v, u: ((Fv + damping * v.detach() / v_norm) - u / v_norm),
+                lambda Fv, v, u: (
+                    (Fv + damping * v.detach() / v_norm) - u / (u_norm * v_norm)
+                ),
                 Fv_norm,
                 v_model,
                 u_model,
