@@ -188,18 +188,18 @@ def initialise_FishModel(
             #     module.weight.data.zero_()
             #     module.bias.data.zero_()
 
-        elif isinstance(module, nn.Embedding):
-            replace = FishEmbedding(
-                num_embeddings=module.num_embeddings,
-                embedding_dim=module.embedding_dim,
-                padding_idx=module.padding_idx,
-                max_norm=module.max_norm,
-                norm_type=module.norm_type,
-                scale_grad_by_freq=module.scale_grad_by_freq,
-                sparse=module.sparse,
-                init_scale=fish_scale,
-                device=next(module.parameters()).device,
-            )
+        #elif isinstance(module, nn.Embedding):
+        #    replace = FishEmbedding(
+        #        num_embeddings=module.num_embeddings,
+        #        embedding_dim=module.embedding_dim,
+        #        padding_idx=module.padding_idx,
+        #        max_norm=module.max_norm,
+        #        norm_type=module.norm_type,
+        #        scale_grad_by_freq=module.scale_grad_by_freq,
+        #        sparse=module.sparse,
+        #        init_scale=fish_scale,
+        #        device=next(module.parameters()).device,
+        #    )
 
         elif isinstance(module, nn.Conv2d):
             replace = FishConv2d(
@@ -219,7 +219,9 @@ def initialise_FishModel(
 
         elif isinstance(module, BertAttention):
             config = model.config
-            replace = FishBertAttention(config, device=next(module.parameters()).device)
+            replace = FishBertAttention(config, 
+                    init_scale=fish_scale,
+                    device=next(module.parameters()).device)
 
         elif isinstance(module, nn.BatchNorm2d):
             replace = FishBatchNorm2d(
@@ -237,7 +239,7 @@ def initialise_FishModel(
                 normalized_shape=module.normalized_shape,
                 eps=module.eps,
                 elementwise_affine=module.elementwise_affine,
-                init_scale=fish_scale,
+                #init_scale=fish_scale,
                 device=next(module.parameters()).device,
             )
         else:

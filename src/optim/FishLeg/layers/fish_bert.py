@@ -12,6 +12,7 @@ class FishBertAttention(BertAttention, FishModule):
         self,
         config,
         position_embedding_type=None,
+        init_scale: int = 1.0,
         device=None,
     ) -> None:
         super(FishBertAttention, self).__init__(config, position_embedding_type)
@@ -45,18 +46,18 @@ class FishBertAttention(BertAttention, FishModule):
                 "O": FishAuxParameter(
                     torch.eye(self.hidden_size),
                 ),
-                "Sk": FishAuxParameter(torch.ones(self.hidden_size + 1, self.hidden_size)),
-                "Sq": FishAuxParameter(torch.ones(self.hidden_size, self.hidden_size + 1)),
-                "Sv": FishAuxParameter(torch.ones(self.hidden_size, self.hidden_size + 1)),
-                "So": FishAuxParameter(torch.ones(self.hidden_size, self.hidden_size + 1)),
+                "Sk": FishAuxParameter(torch.ones(self.hidden_size + 1, self.hidden_size).mul_(np.sqrt(init_scale))),
+                "Sq": FishAuxParameter(torch.ones(self.hidden_size, self.hidden_size + 1).mul_(np.sqrt(init_scale))),
+                "Sv": FishAuxParameter(torch.ones(self.hidden_size, self.hidden_size + 1).mul_(np.sqrt(init_scale))),
+                "So": FishAuxParameter(torch.ones(self.hidden_size, self.hidden_size + 1).mul_(np.sqrt(init_scale))),
             }
         )
 
         self.order = [
-            "self.key.weight",
-            "self.key.bias",
             "self.query.weight",
             "self.query.bias",
+            "self.key.weight",
+            "self.key.bias",
             "self.value.weight",
             "self.value.bias",
             "output.dense.weight",
@@ -89,8 +90,8 @@ class FishBertAttention(BertAttention, FishModule):
         Sv = self.fishleg_aux["Sv"]
         So = self.fishleg_aux["So"]
 
-        Uk = Sk * torch.transpose(torch.cat([v[0], v[1][:, None]], dim=-1), -1, -2)
-        Uq = Sq * torch.cat([v[2], v[3][:, None]], dim=-1)
+        Uk = Sk * torch.transpose(torch.cat([v[2], v[3][:, None]], dim=-1), -1, -2)
+        Uq = Sq * torch.cat([v[0], v[1][:, None]], dim=-1)
         Uv = Sv * torch.cat([v[4], v[5][:, None]], dim=-1)
         Uo = So * torch.cat([v[6], v[7][:, None]], dim=-1)
 
@@ -132,10 +133,10 @@ class FishBertAttention(BertAttention, FishModule):
         )
 
         return (
-            Vk[:, :-1],
-            Vk[:, -1],
             Vq[:, :-1],
             Vq[:, -1],
+            Vk[:, :-1],
+            Vk[:, -1],
             Vv[:, :-1],
             Vv[:, -1],
             Vo[:, :-1],
@@ -158,22 +159,22 @@ class FishBertAttention(BertAttention, FishModule):
         # Sq -> (in+1, out), -> -1 -> out, out, ..., bias
 
         diagk = torch.kron(
-            torch.sum(self.fishleg_aux["Q"] @ L, dim=-1),
-            torch.sum(self.fishleg_aux["A"] @ R, dim=-1),
+            torch.sum(torch.square(self.fishleg_aux["Q"] @ L), dim=-1),
+            torch.sum(torch.square(self.fishleg_aux["A"] @ R), dim=-1),
         ) * torch.square(self.fishleg_aux["Sk"].T).reshape(-1)
 
         diagq = torch.kron(
-            torch.sum(self.fishleg_aux["B"].T @ L, dim=-1),
-            torch.sum(self.fishleg_aux["K"].T @ R, dim=-1),
+            torch.sum(torch.square(self.fishleg_aux["B"].T @ L), dim=-1),
+            torch.sum(torch.square(self.fishleg_aux["K"].T @ R), dim=-1),
         ) * torch.square(self.fishleg_aux["Sq"].T).reshape(-1)
 
         diagv = torch.kron(
-            torch.sum(self.fishleg_aux["C"].T @ L, dim=-1),
-            torch.sum(self.fishleg_aux["O"].T @ U, dim=-1),
+            torch.sum(torch.square(self.fishleg_aux["C"].T @ L), dim=-1),
+            torch.sum(torch.square(self.fishleg_aux["O"].T @ U), dim=-1),
         ) * torch.square(self.fishleg_aux["Sv"].T).reshape(-1)
         diago = torch.kron(
-            torch.sum(self.fishleg_aux["V"] @ L, dim=-1),
-            torch.sum(self.fishleg_aux["D"] @ U, dim=-1),
+            torch.sum(torch.square(self.fishleg_aux["V"] @ L), dim=-1),
+            torch.sum(torch.square(self.fishleg_aux["D"] @ U), dim=-1),
         ) * torch.square(self.fishleg_aux["So"].T).reshape(-1)
 
         K = diagk.reshape(self.all_head_size, self.hidden_size + 1)
@@ -182,10 +183,10 @@ class FishBertAttention(BertAttention, FishModule):
         O = diago.reshape(self.all_head_size + 1, self.hidden_size).T
 
         return (
-            K[:, :-1],
-            K[:, -1],
             Q[:, :-1],
             Q[:, -1],
+            K[:, :-1],
+            K[:, -1],
             V[:, :-1],
             V[:, -1],
             O[:, :-1],

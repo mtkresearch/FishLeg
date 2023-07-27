@@ -14,6 +14,11 @@ __all__ = [
     "FishLeg",
 ]
 
+def any_match(name, record_list):
+    for record in record_list:
+        if name in record:
+            return True
+    return False
 
 class FishLeg(Optimizer):
     r"""Implement FishLeg algorithm.
@@ -101,6 +106,7 @@ class FishLeg(Optimizer):
         precondition_aux: bool = True,
         u_sampling: str = "gradient",
         writer: SummaryWriter or bool = False,
+        device: str = "cpu"
     ) -> None:
         self.model = model
 
@@ -108,6 +114,7 @@ class FishLeg(Optimizer):
         self.likelihood = likelihood
 
         self.writer = writer
+        self.device = device
 
         defaults = dict(
             lr=lr,
@@ -154,8 +161,20 @@ class FishLeg(Optimizer):
         if not step_is_tensor:
             for s in state_values:
                 s["step"] = torch.tensor(float(s["step"]))
+    
+    def modules(self):
+        record = []
+        for name, module in self.model.named_modules():
+            if isinstance(module, FishModule) \
+                and not any_match(name, record):
+                record.extend(
+                    ['.'.join([name, para_name]) for para_name in module.order]
+                )
+                yield name, module
+            elif not any_match(name, record):
+                yield name, module
 
-    def update_aux(self) -> None:
+    def update_aux(self, log_results=True, u_sample_overwrite=False) -> None:
         """
         Performs a single auxliarary parameter update
         using Adam. By minimizing the following objective:
@@ -168,16 +187,20 @@ class FishLeg(Optimizer):
         """
         self.aux_opt.zero_grad()
 
-        data_x, _ = next(iter(self.aux_dataloader))
+        data_x = next(iter(self.aux_dataloader))
+        data_x = type(data_x)({k: v.to(self.device) for k, v in data_x.items()})
 
         group = self.param_groups[0]
         damping = group["damping"]
         method = group["method"]
         method_kwargs = group["method_kwargs"]
         precondition_aux = group["precondition_aux"]
-        u_sampling = group["u_sampling"]
+        if u_sample_overwrite:
+            u_sampling = u_sample_overwrite
+        else:
+            u_sampling = group["u_sampling"]
 
-        pred_y = self.model(data_x)
+        pred_y = self.model(**data_x)
         with torch.no_grad():
             samples_y = self.likelihood.draw(pred_y)
 
@@ -185,7 +208,7 @@ class FishLeg(Optimizer):
             if u_sampling == "gradient":
                 return g
             elif u_sampling == "gaussian":
-                return torch.randn(size=g.shape)
+                return torch.randn(size=g.shape).to(self.device)
             else:
                 raise NotImplementedError(
                     f"{u_sampling} method of sampling u not implemented yet!"
@@ -195,14 +218,15 @@ class FishLeg(Optimizer):
 
         v_model, u_model = [], []
         v2, u2 = 0, 0
-        for module in self.model.modules():
+        params = []
+        for layer_name, module in self.modules():
             if isinstance(module, FishModule):
                 layer_grads = []
-                for param in module.not_aux_parameters():
+                for name, param in module.named_not_aux_parameters():
                     layer_grads.append(sample_u(param.grad.data))
+                    params.append(param)
 
                 v_layer = module.Qv(layer_grads)
-
                 for v, u in zip(v_layer, layer_grads):
                     v2 += torch.sum(v.detach() ** 2)
                     u2 += torch.sum(u**2)
@@ -219,33 +243,33 @@ class FishLeg(Optimizer):
 
             def _augment_params_by(eps: float):
                 p_idx = 0
-                for module in self.model.modules():
+                for _, module in self.modules():
                     if isinstance(module, FishModule):
-                        for param in module.not_aux_parameters():
+                        for name,param in module.named_not_aux_parameters():
                             param.data += eps * v_model[p_idx].detach() / v_norm
                             p_idx += 1
 
             # Add to gradients
             _augment_params_by(eps)
 
-            pred_y = self.model(data_x)
+            pred_y = self.model(**data_x)
             plus_loss = self.likelihood.nll(pred_y, samples_y)
 
             plus_grad = torch.autograd.grad(
                 plus_loss,
-                inputs=group["params"],
+                inputs=params,
                 allow_unused=True,
             )
 
             # Minus gradients
             _augment_params_by(-2 * eps)
 
-            pred_y = self.model(data_x)
+            pred_y = self.model(**data_x)
             minus_loss = self.likelihood.nll(pred_y, samples_y)
 
             minus_grad = torch.autograd.grad(
                 minus_loss,
-                inputs=group["params"],
+                inputs=params,
                 allow_unused=True,
             )
 
@@ -265,7 +289,7 @@ class FishLeg(Optimizer):
 
             p_idx = 0
             g_dot_w = 0
-            for module in self.model.modules():
+            for _,module in self.modules():
                 if isinstance(module, FishModule):
                     for param in module.not_aux_parameters():
                         nat_grad = v_model[p_idx]
@@ -274,7 +298,7 @@ class FishLeg(Optimizer):
                         p_idx += 1
 
             Fv_norm = list(map(lambda a: g_dot_w * a / v_norm, v_model))
-
+        
         else:
             raise NotImplementedError(
                 f"{method} method of approximation not implemented yet!"
@@ -297,7 +321,7 @@ class FishLeg(Optimizer):
             with torch.no_grad():
                 v_adj_new = []
                 count = 0
-                for module in self.model.modules():
+                for _, module in self.modules():
                     if isinstance(module, FishModule):
                         v_adj_group = []
                         for param in module.not_aux_parameters():
@@ -320,7 +344,7 @@ class FishLeg(Optimizer):
         if not precondition_aux:
             aux_loss = surrogate_loss.item()
 
-        if self.writer:
+        if self.writer and log_results:
             self.writer.add_scalar(
                 "AuxLoss/train",
                 aux_loss,
@@ -339,7 +363,25 @@ class FishLeg(Optimizer):
 
         self.aux_opt.step()
         return surrogate_loss.item()
+    
+    def pretrain_fish(
+        self, iterations: int, pretrain_writer: SummaryWriter or None = None
+    ) -> List:
+        pretrain_losses = []
+        for pre_step in range(1, iterations + 1):
+            loss = self.update_aux(log_results=False, u_sample_overwrite="gaussian")
 
+            pretrain_losses.append(loss)
+                
+            if pretrain_writer:
+                pretrain_writer.add_scalar(
+                    "SurrogateLoss/pretrain",
+                    loss,
+                    pre_step,
+                )
+
+        return pretrain_losses
+    
     def _init_group(
         self,
         group,
@@ -400,7 +442,7 @@ class FishLeg(Optimizer):
         # TODO: Could do with a better way of indexing here maybe?
         with torch.no_grad():
             p_idx = 0
-            for module in self.model.modules():
+            for module in self.modules():
                 if isinstance(module, FishModule):
                     layer_grads = []
                     for param in module.not_aux_parameters():

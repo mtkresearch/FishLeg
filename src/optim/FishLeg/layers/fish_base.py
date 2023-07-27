@@ -54,15 +54,15 @@ class FishModule(nn.Module):
                 yield name, param
                                             
     def not_aux_parameters(self, recurse: bool = True):
-        for param in self.parameters(recurse=recurse):
-            if not isinstance(param, FishAuxParameter):
+        for name, param in self.named_parameters(recurse=recurse):
+            if not isinstance(param, FishAuxParameter) and name in self.order:
                 yield param
     
     def named_not_aux_parameters(self, prefix: str = '',
             recurse: bool = True,
             remove_duplicate: bool = True):
-        for name, param in self.named_parameters(prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate):
-            if not isinstance(param, FishAuxParameter):
+        for name, param in self.named_parameters(prefix=prefix, recurse=recurse):
+            if not isinstance(param, FishAuxParameter) and name in self.order:
                 yield name, param
 
     @abstractmethod
