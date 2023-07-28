@@ -27,21 +27,21 @@ class FishBatchNorm2d(nn.BatchNorm2d, FishModule):
             self.fishleg_aux = ParameterDict(
                 {
                     "L_w": FishAuxParameter(
-                        torch.ones(
-                            (num_features,), device=device
-                        )  # * np.sqrt(init_scale) # TODO: CHECK
+                        torch.ones((num_features,), device=device).mul_(
+                            np.sqrt(init_scale)
+                        )  # TODO: CHECK
                     ),
                     "L_b": FishAuxParameter(
-                        torch.ones(
-                            (num_features,), device=device
-                        )  # * np.sqrt(init_scale)
+                        torch.ones((num_features,), device=device).mul_(
+                            np.sqrt(init_scale)
+                        )
                     ),
                 }
             )
 
         self.order = ["weight", "bias"]
 
-    def Qv(self, v: Tuple, full=False):
+    def Qv(self, v: Tuple):
         return (
             torch.square(self.fishleg_aux["L_w"]) * v[0],
             torch.square(self.fishleg_aux["L_b"]) * v[1],

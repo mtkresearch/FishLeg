@@ -255,7 +255,6 @@ class FishLeg(Optimizer):
 
             # Restore parameters
             _augment_params_by(eps)
-            print(plus_loss - minus_loss)
 
             Fv_norm = list(map(lambda a, b: 0.5 * (a - b) / eps, plus_grad, minus_grad))
 
