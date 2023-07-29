@@ -170,9 +170,12 @@ class FishLeg(Optimizer):
                 record.extend(
                     ['.'.join([name, para_name]) for para_name in module.order]
                 )
-                yield name, module
-            elif not any_match(name, record):
-                yield name, module
+                yield module
+            elif not any_match(name, record) and 'weight' in [name for name,_ in module.named_parameters()]:
+                record.extend([
+                    '.'.join([name, para_name]) for para_name,_ in module.named_parameters()    
+                ])
+                yield module
 
     def update_aux(self, log_results=True, u_sample_overwrite=False) -> None:
         """
@@ -219,7 +222,7 @@ class FishLeg(Optimizer):
         v_model, u_model = [], []
         v2, u2 = 0, 0
         params = []
-        for layer_name, module in self.modules():
+        for module in self.modules():
             if isinstance(module, FishModule):
                 layer_grads = []
                 for name, param in module.named_not_aux_parameters():
@@ -234,7 +237,7 @@ class FishLeg(Optimizer):
                     u_model.append(u)
 
         u_norm = torch.sqrt(u2)
-        v_norm = torch.sqrt(v2) * u_norm
+        v_norm = torch.sqrt(v2)
 
         # the different methods differ in how they compute Fv_norm
 
@@ -243,7 +246,7 @@ class FishLeg(Optimizer):
 
             def _augment_params_by(eps: float):
                 p_idx = 0
-                for _, module in self.modules():
+                for module in self.modules():
                     if isinstance(module, FishModule):
                         for name,param in module.named_not_aux_parameters():
                             param.data += eps * v_model[p_idx].detach() / v_norm
@@ -289,7 +292,7 @@ class FishLeg(Optimizer):
 
             p_idx = 0
             g_dot_w = 0
-            for _,module in self.modules():
+            for module in self.modules():
                 if isinstance(module, FishModule):
                     for param in module.not_aux_parameters():
                         nat_grad = v_model[p_idx]
@@ -308,7 +311,7 @@ class FishLeg(Optimizer):
         v_adj = list(
             map(
                 lambda Fv, v, u: (
-                    (Fv + float(damping) * v.detach() / v_norm) - u / v_norm
+                    (Fv + float(damping) * v.detach() / v_norm) - u / (u_norm * v_norm)
                 ),
                 Fv_norm,
                 v_model,
@@ -321,7 +324,7 @@ class FishLeg(Optimizer):
             with torch.no_grad():
                 v_adj_new = []
                 count = 0
-                for _, module in self.modules():
+                for module in self.modules():
                     if isinstance(module, FishModule):
                         v_adj_group = []
                         for param in module.not_aux_parameters():
@@ -411,7 +414,7 @@ class FishLeg(Optimizer):
                 exp_avgs.append(state["exp_avg"])
                 state_steps.append(state["step"])
 
-    def step(self) -> None:
+    def step(self, closure=None, data=None) -> None:
         """
         Performes a single optimization step of FishLeg.
         """
@@ -450,7 +453,7 @@ class FishLeg(Optimizer):
 
                     nat_grads = module.Qv(layer_grads)
 
-                    for n, (_, param) in enumerate(module.named_parameters()):
+                    for n,param in enumerate(module.not_aux_parameters()):
                         if not isinstance(param, FishAuxParameter):
                             nat_grad = nat_grads[n]
                             exp_avg = exp_avgs[p_idx]
@@ -464,12 +467,12 @@ class FishLeg(Optimizer):
                                 exp_avg = exp_avg.add(param, alpha=weight_decay)
 
                             param.add_(exp_avg, alpha=-step_size)
-
+                
                 # This is for updating non-FishLeg layers - do we want this/needs checking.
                 elif not isinstance(module, nn.Sequential) and not isinstance(
                     module, nn.ParameterDict
                 ):
-                    for n, (_, param) in enumerate(module.named_parameters()):
+                    for n, (para_name, param) in enumerate(module.named_parameters()):
                         if not isinstance(param, FishAuxParameter):
                             grad = grads[p_idx]
                             exp_avg = exp_avgs[p_idx]
