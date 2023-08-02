@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from torch.optim import Optimizer, Adam
 import sys
+import os
+import numpy as np
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -207,11 +209,20 @@ class FishLeg(Optimizer):
         with torch.no_grad():
             samples_y = self.likelihood.draw(pred_y)
 
-        def sample_u(g: torch.Tensor) -> torch.Tensor:
+        def sample_u(g: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+            mask = ~(weight == 0)
             if u_sampling == "gradient":
-                return g
+                return g * mask
             elif u_sampling == "gaussian":
-                return torch.randn(size=g.shape).to(self.device)
+                scale = torch.sqrt(g[mask].var())
+                sample = torch.randn_like(g) * scale * mask
+                return sample
+            elif u_sampling == "ginv":
+                #scale = torch.sqrt(g[mask].var())
+                inv = g / (torch.square(g) + damping) * mask
+                if torch.any(torch.isnan(inv)) or torch.any(torch.isinf(inv)):
+                    print(g[torch.isinf(inv)],inv[torch.isnan(inv)], inv[torch.isinf(inv)])
+                return inv
             else:
                 raise NotImplementedError(
                     f"{u_sampling} method of sampling u not implemented yet!"
@@ -226,7 +237,8 @@ class FishLeg(Optimizer):
             if isinstance(module, FishModule):
                 layer_grads = []
                 for name, param in module.named_not_aux_parameters():
-                    layer_grads.append(sample_u(param.grad.data))
+                    sampled = sample_u(param.grad.data, param.data)
+                    layer_grads.append(sampled)
                     params.append(param)
 
                 v_layer = module.Qv(layer_grads)
@@ -238,7 +250,6 @@ class FishLeg(Optimizer):
 
         u_norm = torch.sqrt(u2)
         v_norm = torch.sqrt(v2)
-
         # the different methods differ in how they compute Fv_norm
 
         if method == "antithetic":
@@ -337,7 +348,7 @@ class FishLeg(Optimizer):
                         for v in v_adj_new_group:
                             v_adj_new.append(v / v_norm)
                 v_adj = v_adj_new
-
+        
         for v_a, v in zip(v_adj, v_model):
             surrogate_loss += torch.dot(v_a.reshape(-1), v.reshape(-1))
 
@@ -368,12 +379,24 @@ class FishLeg(Optimizer):
         return surrogate_loss.item()
     
     def pretrain_fish(
-        self, iterations: int, pretrain_writer: SummaryWriter or None = None
+            self, iterations: int, 
+            pretrain_writer: SummaryWriter or None = None, 
+            output_dir:str or None = None,
+            u_sampling : str = "gradient"
     ) -> List:
+        if pretrain_writer is None:
+            pretrain_writer = self.writer
+        
+        self.model.train()
         pretrain_losses = []
         for pre_step in range(1, iterations + 1):
-            loss = self.update_aux(log_results=False, u_sample_overwrite="gaussian")
-
+            inputs = next(iter(self.aux_dataloader))
+            inputs = type(inputs)({k: v.to(self.device) for k, v in inputs.items()}) 
+            self.zero_grad()
+            outputs = self.model(**inputs)
+            outputs[0].backward()
+            
+            loss = self.update_aux(log_results=False, u_sample_overwrite=u_sampling)
             pretrain_losses.append(loss)
                 
             if pretrain_writer:
@@ -382,6 +405,19 @@ class FishLeg(Optimizer):
                     loss,
                     pre_step,
                 )
+            if pre_step % 100 == 0:
+                print(pre_step, np.mean(pretrain_losses[-100:]))
+            if pre_step % 1000 == 0:
+                save_path = os.path.join(output_dir, 
+                                     f"fl_model_checkpoint_{pre_step}.pth")
+
+                with open(save_path, mode="wb") as file_:
+                    torch.save(
+                        {
+                        "model_state_dict": self.model.state_dict(),
+                        },
+                    file_,
+                    )
 
         return pretrain_losses
     

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn import ParameterDict
-
+import numpy as np
 from .fish_base import FishModule, FishAuxParameter
 from typing import Tuple
 
@@ -12,8 +12,9 @@ class FishLayerNorm(nn.LayerNorm, FishModule):
         normalized_shape,
         eps: float = 0.00001,
         elementwise_affine: bool = True,
-        device=None,
-        dtype=None,
+        init_scale: float = 1.,
+        device = None,
+        dtype = None,
     ) -> None:
         super().__init__(normalized_shape, eps, elementwise_affine, device, dtype)
 
@@ -23,12 +24,14 @@ class FishLayerNorm(nn.LayerNorm, FishModule):
             self.fishleg_aux = ParameterDict(
                 {
                     "L_w": FishAuxParameter(
-                        torch.ones(normalized_shape, device=device)
-                        # * np.sqrt(init_scale) # TODO: CHECK
+                        torch.ones(normalized_shape, device=device).mul_(
+                            np.sqrt(init_scale)
+                        )# TODO: CHECK
                     ),
                     "L_b": FishAuxParameter(
-                        torch.ones(normalized_shape, device=device)
-                        # * np.sqrt(init_scale)
+                        torch.ones(normalized_shape, device=device).mul_(
+                            np.sqrt(init_scale)
+                        )
                     ),
                 }
             )

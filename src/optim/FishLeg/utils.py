@@ -239,7 +239,7 @@ def initialise_FishModel(
                 normalized_shape=module.normalized_shape,
                 eps=module.eps,
                 elementwise_affine=module.elementwise_affine,
-                #init_scale=fish_scale,
+                init_scale=fish_scale,
                 device=next(module.parameters()).device,
             )
         else:
