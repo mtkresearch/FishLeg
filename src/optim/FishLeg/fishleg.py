@@ -198,25 +198,36 @@ class FishLeg(Optimizer):
         surrogate_loss = 0
 
         v_model, u_model = [], []
+        model_mask = []
         v2, u2 = 0, 0
         for module in self.model.modules():
             if isinstance(module, FishModule):
                 layer_grads = []
+                layer_mask = []
                 for param in module.not_aux_parameters():
                     layer_grads.append(sample_u(param.grad.data))
+                    layer_mask.append(abs(param.data) < 1e-30)
 
                 v_layer = module.Qv(layer_grads)
 
-                for v, u in zip(v_layer, layer_grads):
+                # TODO: mask v_layer and layer_grads
+                for l_grad, v_grad, l_mask in zip(layer_grads, v_layer, layer_mask):
+                    l_grad[l_mask] = 0.0
+                    v_grad[l_mask] = 0.0
+
+                for v, u, l in zip(v_layer, layer_grads, layer_mask):
                     v2 += torch.sum(v.detach() ** 2)
                     u2 += torch.sum(u**2)
                     v_model.append(v)
                     u_model.append(u)
+                    model_mask.append(l)
 
         u_norm = torch.sqrt(u2)
         v_norm = torch.sqrt(v2)
 
         # the different methods differ in how they compute Fv_norm
+
+        # TODO: Mask v_model
 
         if method == "antithetic":
             eps = method_kwargs["eps"] if "eps" in method_kwargs.keys() else 1e-4
@@ -284,7 +295,10 @@ class FishLeg(Optimizer):
                 f"{method} method of approximation not implemented yet!"
             )
 
-        # Note that here v_norm already contains a factor of u_norm!
+        # TODO: Mask Fv_norm
+        for Fv_n, m_mask in zip(Fv_norm, model_mask):
+            Fv_n[m_mask] = 0.0
+
         v_adj = list(
             map(
                 lambda Fv, v, u: (

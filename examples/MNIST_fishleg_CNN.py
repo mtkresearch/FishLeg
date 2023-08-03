@@ -110,6 +110,7 @@ opt = FishLeg(
     update_aux_every=update_aux_every,
     writer=writer,
     method="antithetic",
+    u_sampling="gaussian",
     method_kwargs={"eps": 1e-4},
     precondition_aux=True,
 )
