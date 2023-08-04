@@ -23,7 +23,7 @@ class GaussianLikelihood(FishLikelihoodBase):
 
     def __init__(self, sigma: torch.Tensor, device: str = "cpu") -> None:
         self.device = device
-        self.sigma = Parameter(torch.tensor(sigma))
+        self.sigma = torch.tensor(sigma) #Parameter(torch.tensor(sigma))
         self.sigma.to(self.device)
 
     def nll(self, preds: torch.Tensor, observations: torch.Tensor) -> torch.Tensor:

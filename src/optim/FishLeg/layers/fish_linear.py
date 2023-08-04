@@ -19,6 +19,8 @@ class FishLinear(nn.Linear, FishModule):
         out_features: int,
         bias: bool = True,
         init_scale: int = 1.0,
+        approx: str = 'kronecker',
+        block_size: int = 50,
         device: str or None = None,
         dtype: str or None = None,
     ) -> None:
@@ -28,8 +30,12 @@ class FishLinear(nn.Linear, FishModule):
 
         self._layer_name = "Linear"
         self.init_scale = init_scale
-        self.fishleg_aux = ParameterDict(
-            {
+        self.in_features = in_features + (1 if bias else 0)
+        self.out_features = out_features
+        
+        if approx == 'kronecker':
+            self.fishleg_aux = ParameterDict(
+                {
                 "L": FishAuxParameter(torch.eye(in_features + (1 if bias else 0))),
                 "R": FishAuxParameter(torch.eye(out_features)),
                 "A": FishAuxParameter(
@@ -37,9 +43,28 @@ class FishLinear(nn.Linear, FishModule):
                         np.sqrt(init_scale)
                     )
                 ),
-            }
-        )
+                }
+            )
+        elif approx == 'full':
+            self.fishleg_aux = ParameterDict(
+                {
+                    "L": FishAuxParameter(torch.eye(
+                            (in_features + (1 if bias else 0)) * out_features
+                         ).mul_(
+                        np.sqrt(init_scale))),
+                }
+            )
+        elif approx == 'block':
+            size = (in_features + (1 if bias else 0)) * out_features    
+            assert size % block_size == 0
 
+            self.fishleg_aux = nn.ParameterList([
+                    FishAuxParameter(torch.eye(block_size).mul_(
+                        np.sqrt(init_scale))) for _ in range(size//block_size)
+                ])
+        else:
+            raise NotImplementedError(f"{approx} method of approximation not implemented yet!")
+        self.approx = approx
         self.order = ["weight", "bias"] if bias else ["weight"]
         self.device = device
 
@@ -63,14 +88,25 @@ class FishLinear(nn.Linear, FishModule):
         where :math:`A_l` and :math:`D_l` are two diagonal matrices of the
         appropriate size.
         """
-        L = self.fishleg_aux["L"]
-        R = self.fishleg_aux["R"]
         u = torch.cat([v[0], v[1][:, None]], dim=-1) if self.bias is not None else v[0]
+        if self.approx == 'kronecker':
+            L = self.fishleg_aux["L"]
+            R = self.fishleg_aux["R"]
+            A = self.fishleg_aux["A"]
+            u = A * torch.linalg.multi_dot((R.T, R, A*u, L, L.T))
+        elif self.approx == 'full':
+            L = self.fishleg_aux["L"]
+            u = L @ L.T @ u.reshape(-1)
+            u = u.reshape(self.out_features, self.in_features)
+        else:
+            u = u.reshape(-1)
+            block_size = self.fishleg_aux[0].shape[0]
+            uu = torch.zeros_like(u)
 
-        A = self.fishleg_aux["A"]
-        u = A * u
-        u = torch.linalg.multi_dot((R.T, R, u, L, L.T))
-        u = A * u
+            for k,j in enumerate(range(0, u.shape[0], block_size)):
+                uu[j : j + block_size] = self.fishleg_aux[k] @ self.fishleg_aux[k].T @ u[j : j + block_size]
+            u = uu.reshape(self.out_features, self.in_features)
+
         return (u[:, :-1], u[:, -1]) if self.bias is not None else (u,)
 
     def diagQ(self) -> Tuple:
@@ -96,10 +132,19 @@ class FishLinear(nn.Linear, FishModule):
         the Kronecker product.
 
         """
-        L = self.fishleg_aux["L"]
-        R = self.fishleg_aux["R"]
-        diag = torch.kron(torch.sum(L * L, dim=1), torch.sum(R * R, dim=0))
-        diag = diag * torch.square(self.fishleg_aux["A"].T).reshape(-1)
 
-        diag = diag.reshape(L.shape[0], R.shape[0]).T
+        if self.approx == 'kronecker':
+            L = self.fishleg_aux["L"]
+            R = self.fishleg_aux["R"]
+            diag = torch.kron(torch.sum(L * L, dim=1), torch.sum(R * R, dim=0))
+            diag = diag * torch.square(self.fishleg_aux["A"].T).reshape(-1)
+
+            diag = diag.reshape(L.shape[0], R.shape[0]).T
+        elif self.approx == 'full':
+            L = self.fishleg_aux["L"]
+            diag = torch.sum(L * L, dim = 1)
+            diag = diag.reshape(self.out_features, self.in_features)
+        else:
+            diag = torch.concat([torch.sum(block * block, dim=1) for block in self.fishleg_aux])
+            diag = diag.reshape(self.out_features, self.in_features)
         return (diag[:, :-1], diag[:, -1]) if self.bias is not None else (diag,)
