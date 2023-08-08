@@ -58,10 +58,12 @@ class FishLinear(nn.Linear, FishModule):
             size = (in_features + (1 if bias else 0)) * out_features    
             assert size % block_size == 0
 
-            self.fishleg_aux = nn.ParameterList([
-                    FishAuxParameter(torch.eye(block_size).mul_(
-                        np.sqrt(init_scale))) for _ in range(size//block_size)
-                ])
+            self.fishleg_aux = FishAuxParameter(
+                    torch.eye(block_size).mul_(
+                            np.sqrt(init_scale)
+                        ).unsqueeze(0).repeat(size//block_size, 1, 1)
+                    )
+            
         else:
             raise NotImplementedError(f"{approx} method of approximation not implemented yet!")
         self.approx = approx
@@ -99,13 +101,10 @@ class FishLinear(nn.Linear, FishModule):
             u = L @ L.T @ u.reshape(-1)
             u = u.reshape(self.out_features, self.in_features)
         else:
-            u = u.reshape(-1)
-            block_size = self.fishleg_aux[0].shape[0]
-            uu = torch.zeros_like(u)
-
-            for k,j in enumerate(range(0, u.shape[0], block_size)):
-                uu[j : j + block_size] = self.fishleg_aux[k] @ self.fishleg_aux[k].T @ u[j : j + block_size]
-            u = uu.reshape(self.out_features, self.in_features)
+            u = u.reshape(-1).view(self.fishleg_aux.shape[:-1])
+            Q = torch.bmm(self.fishleg_aux, torch.transpose(self.fishleg_aux, -1, -2))
+            u = torch.bmm(Q, u.unsqueeze(2)).flatten()
+            u = u.reshape(self.out_features, self.in_features)
 
         return (u[:, :-1], u[:, -1]) if self.bias is not None else (u,)
 
@@ -145,6 +144,20 @@ class FishLinear(nn.Linear, FishModule):
             diag = torch.sum(L * L, dim = 1)
             diag = diag.reshape(self.out_features, self.in_features)
         else:
-            diag = torch.concat([torch.sum(block * block, dim=1) for block in self.fishleg_aux])
-            diag = diag.reshape(self.out_features, self.in_features)
+            diag = torch.sum(self.fishleg_aux**2, dim=-1)
+            diag = diag.flatten().reshape(self.out_features, self.in_features)
+                
         return (diag[:, :-1], diag[:, -1]) if self.bias is not None else (diag,)
+
+    def Q(self):
+        if self.approx == 'kronecker':
+            L = self.fishleg_aux["L"]
+            R = self.fishleg_aux["R"]
+            A = torch.diag(self.fishleg_aux["A"].T.reshape(-1))
+            return A @ torch.kron(L@L.T, R@R.T) @ A
+        
+        elif self.approx == 'block':
+            Q = torch.block_diag(
+                    *[self.fishleg_aux[i]@self.fishleg_aux[i].T for i in range(self.fishleg_aux.shape[0])] 
+                )
+            return Q
