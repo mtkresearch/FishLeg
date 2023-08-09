@@ -328,6 +328,19 @@ class FishLeg(Optimizer):
                 )
             )
 
+        v_aux = list(
+                map(
+                    lambda Fv, v, u, m: (
+                        0.5 * (Fv * m + float(damping) * v.detach() / v_norm) - u / v_norm
+                    ),
+                    Fv_norm,
+                    v_model,
+                    u_model,
+                    masks
+                )
+            )
+
+
 
         if precondition_aux:
             with torch.no_grad():
@@ -341,7 +354,7 @@ class FishLeg(Optimizer):
                             masks_layer.append(masks[count])
                             v_adj_group.append(v_adj[count])
                             aux_loss += torch.dot(
-                                v_adj[count].reshape(-1), v_model[count].reshape(-1)
+                                v_aux[count].reshape(-1), v_model[count].reshape(-1)
                             ) / v_norm
                             quadratic += torch.dot(
                                 (Fv_norm[count]*masks[count]).reshape(-1),
@@ -414,7 +427,7 @@ class FishLeg(Optimizer):
                 )
 
             if pre_step % 100 == 0:
-                print(pre_step, np.mean(pretrain_losses[-500:]), np.mean(pretrain_quads[-100:]))
+                print(pre_step, np.sum(pretrain_losses[-100:]), np.sum(pretrain_quads[-100:]))
             if pre_step % 1000 == 0 and output_dir is not None:
                 save_path = os.path.join(output_dir, 
                                      f"fl_model_checkpoint_{pre_step}.pth")
@@ -460,8 +473,8 @@ class FishLeg(Optimizer):
                     pre_step,
                 )
             
-            if pre_step % 100 == 0:
-                print(sparsity[0], pre_step, sum(pretrain_losses[-100:])/100)
+            if pre_step % 32 == 0:
+                print(sparsity[0], pre_step, sum(pretrain_losses[-32:])/32)
 
     def _init_group(
         self,
@@ -519,32 +532,36 @@ class FishLeg(Optimizer):
 
         if step_t % update_aux_every == 0 and step_t != 0:
             self.update_aux()
-
-        norm = 0.0
-        for layer_name, module in self.modules():
-            if isinstance(module, FishModule):
-                for name, param in module.named_not_aux_parameters():
-                    mask = ~(param.data == 0.0)
-                    norm += torch.sum(torch.square(param.grad.data * mask))
-
-        # TODO: Could do with a better way of indexing here maybe?
         with torch.no_grad():
-            p_idx = 0
+            nat_grads = []
+            v2 = 0.0
+            for layer_name, module in self.modules():
+                if isinstance(module, FishModule):
+                    layer_grads, layer_masks = [], []
+                    for name, param in module.named_not_aux_parameters():
+                        mask = ~(param.data == 0.0)
+                        layer_grads.append(param.grad.data)
+                        layer_masks.append(mask)
+
+                    v_layer = module.Qv(layer_grads)
+                    for v, m in zip(v_layer, layer_masks):
+                        v2 += torch.sum((v * m) ** 2)
+                        nat_grads.append(v * m)
+            v_norm = torch.sqrt(v2)
+        
+            # TODO: Could do with a better way of indexing here maybe?
+            p_idx, count = 0,0
             for module_name,module in self.modules():
                 if isinstance(module, FishModule):
-                    layer_grads = []
-                    for param in module.not_aux_parameters():
-                        layer_grads.append(param.grad.data)
-
-                    nat_grads = module.Qv(layer_grads)
 
                     for n,param in enumerate(module.not_aux_parameters()):
                         if not isinstance(param, FishAuxParameter):
                             mask = ~(param.data == 0.0)
-                            nat_grad = nat_grads[n] / norm * mask
+                            nat_grad = nat_grads[count] / v_norm * mask
                             exp_avg = exp_avgs[p_idx]
                             state_steps[p_idx] += 1
                             p_idx += 1
+                            count += 1
 
                             exp_avg.mul_(beta).add_(nat_grad, alpha=1 - beta)
 
