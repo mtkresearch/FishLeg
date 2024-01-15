@@ -1,1 +1,7 @@
 torch
+numpy
+jax
+jaxlib
+matplotlib
+tensorboard
+transformers
