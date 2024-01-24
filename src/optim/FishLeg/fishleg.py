@@ -101,6 +101,7 @@ class FishLeg(Optimizer):
         precondition_aux: bool = True,
         u_sampling: str = "gradient",
         writer: SummaryWriter or bool = False,
+        aux_log: bool=False
     ) -> None:
         self.model = model
 
@@ -108,6 +109,8 @@ class FishLeg(Optimizer):
         self.likelihood = likelihood
 
         self.writer = writer
+        self.aux_log = aux_log
+        self.aux_loss = None
 
         defaults = dict(
             lr=lr,
@@ -336,6 +339,9 @@ class FishLeg(Optimizer):
                 group["lr"],
                 self.state[group["params"][-1]]["step"],
             )
+
+        if self.aux_log:
+            self.aux_loss = aux_loss
 
         self.aux_opt.step()
         return surrogate_loss.item()
