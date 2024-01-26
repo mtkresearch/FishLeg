@@ -59,7 +59,6 @@ class ImageDataSet(Dataset):
                 images = images.reshape(
                     images.shape[0], images.shape[1] * images.shape[2] * images.shape[3]
                 )
-                print(images.shape)
             images = images.astype(np.float32)
             if if_faces:
                 images = np.swapaxes(images, 1, 2)
