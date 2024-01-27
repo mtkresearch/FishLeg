@@ -143,6 +143,3 @@ runs/
 
 # Test files
 test-*.py
-
-# Pretrained models
-pretrained_example_models/
