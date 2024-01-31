@@ -210,7 +210,7 @@ def get_MNIST(path, if_autoencoder=False):
 
     return data_sets
 
-def get_cifar(path, if_autoencoder=False):
+def read_cifar(path, if_autoencoder=False):
     # code from https://github.com/jeonsworld/MLP-Mixer-Pytorch/blob/main/utils/data_utils.py
     image_size = 32
     transform_train = transforms.Compose(
