@@ -102,4 +102,4 @@ class FishLinear(nn.Linear, FishModule):
         diag = diag * torch.square(self.fishleg_aux["A"].T).reshape(-1)
 
         diag = diag.reshape(L.shape[0], R.shape[0]).T
-        return (diag[:, :-1], diag[:, -1]) if self.bias else (diag,)
+        return (diag[:, :-1], diag[:, -1]) if self.bias is not None else (diag,)

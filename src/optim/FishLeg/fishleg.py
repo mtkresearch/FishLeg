@@ -101,6 +101,7 @@ class FishLeg(Optimizer):
         precondition_aux: bool = True,
         u_sampling: str = "gradient",
         writer: SummaryWriter or bool = False,
+        device: str = "cpu"
     ) -> None:
         self.model = model
 
@@ -108,6 +109,7 @@ class FishLeg(Optimizer):
         self.likelihood = likelihood
 
         self.writer = writer
+        self.device = device
 
         defaults = dict(
             lr=lr,
@@ -177,7 +179,7 @@ class FishLeg(Optimizer):
         precondition_aux = group["precondition_aux"]
         u_sampling = group["u_sampling"]
 
-        pred_y = self.model(data_x)
+        pred_y = self.model(data_x.to(self.device))
         with torch.no_grad():
             samples_y = self.likelihood.draw(pred_y)
 
@@ -228,7 +230,7 @@ class FishLeg(Optimizer):
             # Add to gradients
             _augment_params_by(eps)
 
-            pred_y = self.model(data_x)
+            pred_y = self.model(data_x.to(self.device))
             plus_loss = self.likelihood.nll(pred_y, samples_y)
 
             plus_grad = torch.autograd.grad(
@@ -240,7 +242,7 @@ class FishLeg(Optimizer):
             # Minus gradients
             _augment_params_by(-2 * eps)
 
-            pred_y = self.model(data_x)
+            pred_y = self.model(data_x.to(self.device))
             minus_loss = self.likelihood.nll(pred_y, samples_y)
 
             minus_grad = torch.autograd.grad(
