@@ -162,7 +162,7 @@ class FishLeg(Optimizer):
             for s in state_values:
                 s["step"] = torch.tensor(float(s["step"]))
 
-    def update_aux(self) -> None:
+    def update_aux(self, log_results=True, u_sample_overwrite=False) -> None:
         """
         Performs a single auxliarary parameter update
         using Adam. By minimizing the following objective:
@@ -182,7 +182,10 @@ class FishLeg(Optimizer):
         method = group["method"]
         method_kwargs = group["method_kwargs"]
         precondition_aux = group["precondition_aux"]
-        u_sampling = group["u_sampling"]
+        if u_sample_overwrite:
+            u_sampling = u_sample_overwrite
+        else:
+            u_sampling = group["u_sampling"]
 
         pred_y = self.model(data_x.to(self.device))
         with torch.no_grad():
@@ -192,7 +195,8 @@ class FishLeg(Optimizer):
             if u_sampling == "gradient":
                 return g
             elif u_sampling == "gaussian":
-                return torch.randn(size=g.shape)
+                u = torch.randn(size=g.shape)
+                return u.to(g.device)
             else:
                 raise NotImplementedError(
                     f"{u_sampling} method of sampling u not implemented yet!"
@@ -217,7 +221,7 @@ class FishLeg(Optimizer):
                     u_model.append(u)
 
         u_norm = torch.sqrt(u2)
-        v_norm = torch.sqrt(v2) * u_norm
+        v_norm = torch.sqrt(v2)
 
         # the different methods differ in how they compute Fv_norm
 
@@ -291,7 +295,7 @@ class FishLeg(Optimizer):
         v_adj = list(
             map(
                 lambda Fv, v, u: (
-                    (Fv + float(damping) * v.detach() / v_norm) - u / v_norm
+                    (Fv + damping * v.detach() / v_norm) - u / (u_norm * v_norm)
                 ),
                 Fv_norm,
                 v_model,
@@ -327,7 +331,7 @@ class FishLeg(Optimizer):
         if not precondition_aux:
             aux_loss = surrogate_loss.item()
 
-        if self.writer:
+        if self.writer and log_results:
             self.writer.add_scalar(
                 "AuxLoss/train",
                 aux_loss,
@@ -349,6 +353,24 @@ class FishLeg(Optimizer):
 
         self.aux_opt.step()
         return surrogate_loss.item()
+
+    def pretrain_fish(
+        self, iterations: int, pretrain_writer: SummaryWriter or None = None
+    ) -> List:
+        pretrain_losses = []
+        for pre_step in range(1, iterations + 1):
+            loss = self.update_aux(log_results=False, u_sample_overwrite="gaussian")
+
+            pretrain_losses.append(loss)
+
+            if pretrain_writer:
+                pretrain_writer.add_scalar(
+                    "SurrogateLoss/pretrain",
+                    loss,
+                    pre_step,
+                )
+
+        return pretrain_losses
 
     def _init_group(
         self,

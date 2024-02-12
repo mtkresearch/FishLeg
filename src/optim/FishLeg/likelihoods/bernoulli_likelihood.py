@@ -22,8 +22,8 @@ class BernoulliLikelihood(FishLikelihoodBase):
     def __init__(self, device: str = "cpu") -> None:
         self.device = device
 
-    def nll(self, preds: torch.Tensor, observations: torch.Tensor) -> torch.Tensor:
-        bce = torch.sum(preds * (1.0 - observations) + torch.nn.Softplus()(-preds))
+    def nll(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        bce = torch.sum(preds * (1.0 - targets) + torch.nn.Softplus()(-preds))
         return bce / preds.shape[0]
 
     def draw(self, preds: torch.Tensor) -> torch.Tensor:
