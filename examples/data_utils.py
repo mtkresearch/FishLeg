@@ -56,8 +56,6 @@ class ImageDataSet(Dataset):
         self._num_examples = len(images)
         if len(images) > 0:
             if input_reshape:
-                images = np.swapaxes(images, 2, 3)
-                images = np.swapaxes(images, 1, 2)
                 images = images.reshape(
                     images.shape[0], images.shape[1] * images.shape[2] * images.shape[3]
                 )
