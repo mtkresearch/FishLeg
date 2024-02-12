@@ -113,6 +113,8 @@ class FishLeg(Optimizer):
         self.aux_log = aux_log
         self.aux_loss = None
         self.device = device
+        self.aux_log = aux_log
+        self.aux_loss = None
 
         defaults = dict(
             lr=lr,

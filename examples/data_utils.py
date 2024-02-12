@@ -6,6 +6,8 @@ import gzip
 import urllib.request
 
 from torch.utils.data import Dataset
+import torchvision.datasets as datasets
+import torchvision.transforms as transforms
 
 import copy
 import argparse
@@ -174,6 +176,80 @@ def extract_labels(filename, one_hot=False):
             return dense_to_one_hot(labels)
         return
 
+def get_MNIST(path, if_autoencoder=False):
+    # Define a transform to normalize the data
+    transform = transforms.Compose([transforms.ToTensor()])
+
+    # Download and load the training data
+    train_data = datasets.MNIST(
+        root=path, train=True, download=True, transform=transform, target_transform=transforms.Lambda(
+            lambda y: torch.zeros(10).scatter_(0, torch.tensor(y), value=1)
+        )
+    )
+
+    # Download and load the test data
+    test_data = datasets.MNIST(
+        root=path, train=False, download=True, transform=transform, target_transform=transforms.Lambda(
+            lambda y: torch.zeros(10).scatter_(0, torch.tensor(y), value=1)
+        )
+    )
+
+    class DataSets(object):
+        pass
+
+    data_sets = DataSets()
+
+    if if_autoencoder:
+        train_data.targets = train_data.data
+        test_data.targets = test_data.data
+
+    data_sets.train = train_data
+    data_sets.test = test_data
+
+    return data_sets
+
+def read_cifar(path, if_autoencoder=False):
+    # code from https://github.com/jeonsworld/MLP-Mixer-Pytorch/blob/main/utils/data_utils.py
+    image_size = 32
+    transform_train = transforms.Compose(
+        [
+            transforms.RandomResizedCrop((image_size, image_size), scale=(0.05, 1.0)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+        ]
+    )
+    transform_test = transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+        ]
+    )
+
+    train_data = datasets.CIFAR10(
+        root="data", train=True, download=True, transform=transform_train, target_transform=transforms.Lambda(
+            lambda y: torch.zeros(10).scatter_(0, torch.tensor(y), value=1)
+        )
+    )
+    test_data = datasets.CIFAR10(
+        root="data", train=False, download=True, transform=transform_test, target_transform=transforms.Lambda(
+            lambda y: torch.zeros(10).scatter_(0, torch.tensor(y), value=1)
+        )
+    )
+
+    class DataSets(object):
+        pass
+
+    data_sets = DataSets()
+
+    if if_autoencoder:
+        train_data.targets = train_data.data
+        test_data.targets = test_data.data
+
+    data_sets.train = train_data
+    data_sets.test = test_data
+
+    return data_sets
 
 def read_data_sets(name_dataset, home_path, if_autoencoder=True, reshape=True):
     """
