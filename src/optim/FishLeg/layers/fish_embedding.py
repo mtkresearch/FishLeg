@@ -19,6 +19,7 @@ class FishEmbedding(nn.Embedding, FishModule):
         scale_grad_by_freq: bool = False,
         sparse: bool = False,
         _weight: Optional[Tensor] = None,
+        init_scale = None,
         device=None,
         dtype=None,
     ) -> None:

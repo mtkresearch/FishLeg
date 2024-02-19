@@ -12,6 +12,7 @@ class FishLayerNorm(nn.LayerNorm, FishModule):
         normalized_shape,
         eps: float = 0.00001,
         elementwise_affine: bool = True,
+        init_scale = None,
         device=None,
         dtype=None,
     ) -> None:

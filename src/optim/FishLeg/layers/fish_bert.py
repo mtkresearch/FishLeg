@@ -13,6 +13,7 @@ class FishBertAttention(BertAttention, FishModule):
         config,
         position_embedding_type=None,
         device=None,
+        init_scale = None,
     ) -> None:
         super(FishBertAttention, self).__init__(config, position_embedding_type)
 
