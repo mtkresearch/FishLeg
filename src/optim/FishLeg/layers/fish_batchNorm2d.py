@@ -15,7 +15,7 @@ class FishBatchNorm2d(nn.BatchNorm2d, FishModule):
         momentum: float = 0.1,
         affine: bool = True,
         track_running_stats: bool = True,
-        init_scale = None,
+        init_scale: float or None = None,
         device=None,
         dtype=None,
     ) -> None:

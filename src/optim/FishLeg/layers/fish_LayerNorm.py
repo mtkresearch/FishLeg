@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.nn import ParameterDict
 
 from .fish_base import FishModule, FishAuxParameter
-from typing import Tuple
+from typing import Tuple, Optional
 
 
 class FishLayerNorm(nn.LayerNorm, FishModule):
@@ -12,7 +12,7 @@ class FishLayerNorm(nn.LayerNorm, FishModule):
         normalized_shape,
         eps: float = 0.00001,
         elementwise_affine: bool = True,
-        init_scale = None,
+        init_scale: Optional[float] = None,
         device=None,
         dtype=None,
     ) -> None:
